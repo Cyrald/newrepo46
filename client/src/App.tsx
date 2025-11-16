@@ -21,6 +21,7 @@ import ComparisonPage from "@/pages/comparison-page";
 import AdminDashboardPage from "@/pages/admin/dashboard-page";
 import AdminUsersPage from "@/pages/admin/users-page";
 import AdminProductsPage from "@/pages/admin/products-page";
+import AdminCategoriesPage from "@/pages/admin/categories-page";
 import AdminOrdersPage from "@/pages/admin/orders-page";
 
 function Router() {
@@ -79,6 +80,11 @@ function Router() {
       <Route path="/admin/products">
         <ProtectedRoute roles={["admin", "marketer"]}>
           <AdminProductsPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/categories">
+        <ProtectedRoute roles={["admin", "marketer"]}>
+          <AdminCategoriesPage />
         </ProtectedRoute>
       </Route>
       <Route path="/admin/orders">
