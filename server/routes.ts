@@ -307,10 +307,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/addresses", authenticateToken, async (req, res) => {
     try {
       const addressSchema = z.object({
-        addressLine1: z.string().min(1),
-        addressLine2: z.string().optional(),
+        label: z.string().min(1),
+        fullAddress: z.string().min(1),
         city: z.string().min(1),
-        region: z.string().min(1),
+        street: z.string().min(1),
+        building: z.string().min(1),
+        apartment: z.string().optional(),
         postalCode: z.string().min(1),
         isDefault: z.boolean().optional(),
       });
@@ -319,7 +321,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const address = await storage.createUserAddress({
         userId: req.userId!,
-        ...data,
+        label: data.label,
+        fullAddress: data.fullAddress,
+        city: data.city,
+        street: data.street,
+        building: data.building,
+        apartment: data.apartment || null,
+        postalCode: data.postalCode,
+        isDefault: data.isDefault,
       });
       res.json(address);
     } catch (error) {
@@ -333,10 +342,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/addresses/:id", authenticateToken, async (req, res) => {
     try {
       const addressUpdateSchema = z.object({
-        addressLine1: z.string().optional(),
-        addressLine2: z.string().optional(),
+        label: z.string().optional(),
+        fullAddress: z.string().optional(),
         city: z.string().optional(),
-        region: z.string().optional(),
+        street: z.string().optional(),
+        building: z.string().optional(),
+        apartment: z.string().optional(),
         postalCode: z.string().optional(),
         isDefault: z.boolean().optional(),
       });
@@ -344,10 +355,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = addressUpdateSchema.parse(req.body);
 
       const updateData: any = {};
-      if (data.addressLine1 !== undefined) updateData.addressLine1 = data.addressLine1;
-      if (data.addressLine2 !== undefined) updateData.addressLine2 = data.addressLine2;
+      if (data.label !== undefined) updateData.label = data.label;
+      if (data.fullAddress !== undefined) updateData.fullAddress = data.fullAddress;
       if (data.city !== undefined) updateData.city = data.city;
-      if (data.region !== undefined) updateData.region = data.region;
+      if (data.street !== undefined) updateData.street = data.street;
+      if (data.building !== undefined) updateData.building = data.building;
+      if (data.apartment !== undefined) updateData.apartment = data.apartment;
       if (data.postalCode !== undefined) updateData.postalCode = data.postalCode;
       if (data.isDefault !== undefined) updateData.isDefault = data.isDefault;
 
@@ -395,10 +408,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/payment-cards", authenticateToken, async (req, res) => {
     try {
       const cardSchema = z.object({
-        lastFourDigits: z.string().length(4),
-        cardBrand: z.string().min(1),
-        expiryMonth: z.string().length(2),
-        expiryYear: z.string().length(4),
+        yukassaPaymentToken: z.string().min(1),
+        cardLastFour: z.string().length(4),
+        cardType: z.string().min(1),
         isDefault: z.boolean().optional(),
       });
 
@@ -406,7 +418,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const card = await storage.createUserPaymentCard({
         userId: req.userId!,
-        ...data,
+        yukassaPaymentToken: data.yukassaPaymentToken,
+        cardLastFour: data.cardLastFour,
+        cardType: data.cardType,
+        isDefault: data.isDefault || null,
       });
       res.json(card);
     } catch (error) {
@@ -644,6 +659,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/cart", authenticateToken, async (req, res) => {
     try {
       const { productId, quantity } = req.body;
+
+      if (!quantity || quantity < 1 || !Number.isInteger(quantity)) {
+        return res.status(400).json({ message: "Неверное количество товара" });
+      }
+
+      const product = await storage.getProduct(productId);
+      if (!product) {
+        return res.status(404).json({ message: "Товар не найден" });
+      }
+
+      const existingCartItem = await storage.getCartItem(req.userId!, productId);
+      const currentQuantityInCart = existingCartItem?.quantity || 0;
+      const totalQuantity = currentQuantityInCart + quantity;
+
+      if (totalQuantity > product.stockQuantity) {
+        return res.status(400).json({ 
+          message: `Недостаточно товара на складе. Доступно: ${product.stockQuantity}, в корзине: ${currentQuantityInCart}` 
+        });
+      }
+
       const item = await storage.addCartItem({
         userId: req.userId!,
         productId,
@@ -651,6 +686,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.json(item);
     } catch (error) {
+      console.error("[Cart] Error adding item:", error);
       res.status(500).json({ message: "Ошибка добавления в корзину" });
     }
   });
@@ -658,9 +694,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/cart/:productId", authenticateToken, async (req, res) => {
     try {
       const { quantity } = req.body;
+
+      if (quantity < 0 || !Number.isInteger(quantity)) {
+        return res.status(400).json({ message: "Неверное количество товара" });
+      }
+
+      if (quantity > 0) {
+        const product = await storage.getProduct(req.params.productId);
+        if (!product) {
+          return res.status(404).json({ message: "Товар не найден" });
+        }
+
+        if (quantity > product.stockQuantity) {
+          return res.status(400).json({ 
+            message: `Недостаточно товара на складе. Доступно: ${product.stockQuantity}` 
+          });
+        }
+      }
+
       const item = await storage.updateCartItem(req.userId!, req.params.productId, quantity);
       res.json(item);
     } catch (error) {
+      console.error("[Cart] Error updating item:", error);
       res.status(500).json({ message: "Ошибка обновления корзины" });
     }
   });
@@ -829,6 +884,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Пользователь не найден" });
       }
 
+      for (const item of data.items) {
+        const product = await storage.getProduct(item.productId);
+        if (!product) {
+          return res.status(404).json({ message: `Товар ${item.productId} не найден` });
+        }
+        if (product.stockQuantity < item.quantity) {
+          return res.status(400).json({ 
+            message: `Недостаточно товара "${product.name}". Доступно: ${product.stockQuantity}, запрошено: ${item.quantity}` 
+          });
+        }
+      }
+
       let subtotal = 0;
       for (const item of data.items) {
         const price = parseFloat(item.price);
@@ -890,6 +957,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         total: total.toString(),
       });
 
+      for (const item of data.items) {
+        await storage.decreaseProductStock(item.productId, item.quantity);
+      }
+
       if (bonusesUsed > 0) {
         await storage.updateUser(req.userId!, {
           bonusBalance: user.bonusBalance - bonusesUsed,
@@ -947,21 +1018,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/admin/stats", authenticateToken, requireRole("admin"), async (req, res) => {
     try {
-      const orders = await storage.getOrders();
-      const totalRevenue = orders.reduce((sum, order) => {
-        return sum + parseFloat(order.total);
-      }, 0);
+      const now = new Date();
+      const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const twoMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 2, 1);
 
-      const completedOrders = orders.filter(o => o.status === "completed");
+      const allOrders = await storage.getOrders();
+      const allUsers = await storage.getUsers();
+      const { products } = await storage.getProducts({ limit: 10000 });
+
+      const currentMonthOrders = allOrders.filter(o => new Date(o.createdAt) >= currentMonth);
+      const lastMonthOrders = allOrders.filter(o => 
+        new Date(o.createdAt) >= lastMonth && new Date(o.createdAt) < currentMonth
+      );
+      const currentMonthUsers = allUsers.filter(u => new Date(u.createdAt) >= currentMonth);
+      const lastMonthUsers = allUsers.filter(u => 
+        new Date(u.createdAt) >= lastMonth && new Date(u.createdAt) < currentMonth
+      );
+      const currentMonthProducts = products.filter(p => new Date(p.createdAt) >= currentMonth);
+      const lastMonthProducts = products.filter(p => 
+        new Date(p.createdAt) >= lastMonth && new Date(p.createdAt) < currentMonth
+      );
+
+      const totalRevenue = allOrders.reduce((sum, order) => sum + parseFloat(order.total), 0);
+      const currentMonthRevenue = currentMonthOrders.reduce((sum, o) => sum + parseFloat(o.total), 0);
+      const lastMonthRevenue = lastMonthOrders.reduce((sum, o) => sum + parseFloat(o.total), 0);
+
+      const revenueChange = lastMonthRevenue > 0 
+        ? ((currentMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100 
+        : 0;
+      const ordersChange = lastMonthOrders.length > 0 
+        ? ((currentMonthOrders.length - lastMonthOrders.length) / lastMonthOrders.length) * 100 
+        : 0;
+      const customersChange = lastMonthUsers.length > 0 
+        ? ((currentMonthUsers.length - lastMonthUsers.length) / lastMonthUsers.length) * 100 
+        : 0;
+      const productsChange = lastMonthProducts.length > 0 
+        ? ((currentMonthProducts.length - lastMonthProducts.length) / lastMonthProducts.length) * 100 
+        : 0;
+
+      const recentOrders = allOrders
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 5);
       
       res.json({
-        totalOrders: orders.length,
-        completedOrders: completedOrders.length,
-        totalRevenue,
-        pendingOrders: orders.filter(o => o.status === "pending").length,
+        totalRevenue: Math.round(totalRevenue),
+        revenueChange: Math.round(revenueChange * 10) / 10,
+        totalOrders: allOrders.length,
+        ordersChange: Math.round(ordersChange * 10) / 10,
+        totalCustomers: allUsers.length,
+        customersChange: Math.round(customersChange * 10) / 10,
+        totalProducts: products.length,
+        productsChange: Math.round(productsChange * 10) / 10,
+        recentOrders,
       });
     } catch (error) {
+      console.error("[Admin Stats] Error:", error);
       res.status(500).json({ message: "Ошибка получения статистики" });
+    }
+  });
+
+  app.get("/api/admin/users", authenticateToken, requireRole("admin"), async (req, res) => {
+    try {
+      const users = await storage.getUsers();
+      const usersWithRoles = await Promise.all(
+        users.map(async (user) => {
+          const roles = await storage.getUserRoles(user.id);
+          return {
+            ...user,
+            roles: roles.map(r => r.role),
+          };
+        })
+      );
+      res.json(usersWithRoles);
+    } catch (error) {
+      console.error("[Admin Users] Error:", error);
+      res.status(500).json({ message: "Ошибка получения пользователей" });
     }
   });
 

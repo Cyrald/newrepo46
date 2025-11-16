@@ -1,5 +1,8 @@
 import { useState } from "react"
 import { Search, MoreHorizontal, Eye, Package } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
+import { format } from "date-fns"
+import { ru } from "date-fns/locale"
 import { AdminLayout } from "@/components/admin-layout"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -26,17 +29,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { ordersApi } from "@/lib/api"
 
 export default function AdminOrdersPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
 
-  // TODO: Fetch orders from API
-  const orders = []
+  const { data: orders = [], isLoading } = useQuery({
+    queryKey: ["adminOrders"],
+    queryFn: ordersApi.getAll,
+  })
 
-  const filteredOrders = orders.filter((order: any) => {
-    const matchesSearch = order.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.user.email.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredOrders = orders.filter((order) => {
+    const matchesSearch = order.orderNumber.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesStatus = statusFilter === "all" || order.status === statusFilter
     return matchesSearch && matchesStatus
   })
@@ -67,6 +72,16 @@ export default function AdminOrdersPage() {
       cancelled: "Отменен",
     }
     return labels[status] || status
+  }
+
+  if (isLoading) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center h-64">
+          <div className="text-muted-foreground">Загрузка заказов...</div>
+        </div>
+      </AdminLayout>
+    )
   }
 
   return (
@@ -134,7 +149,7 @@ export default function AdminOrdersPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredOrders.map((order: any) => (
+                    {filteredOrders.map((order) => (
                       <TableRow key={order.id}>
                         <TableCell className="font-medium">
                           #{order.orderNumber}

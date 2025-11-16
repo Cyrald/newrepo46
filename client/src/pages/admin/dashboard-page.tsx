@@ -6,23 +6,41 @@ import {
   TrendingUp, 
   TrendingDown 
 } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { AdminLayout } from "@/components/admin-layout"
+import { adminApi } from "@/lib/api"
+import { format } from "date-fns"
+import { ru } from "date-fns/locale"
 
 export default function AdminDashboardPage() {
-  // TODO: Fetch real data from API
-  const stats = {
-    totalRevenue: 125000,
-    revenueChange: 12.5,
-    totalOrders: 450,
-    ordersChange: -3.2,
-    totalCustomers: 1250,
-    customersChange: 8.1,
-    totalProducts: 89,
-    productsChange: 2.3,
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["adminStats"],
+    queryFn: adminApi.getStats,
+  })
+
+  if (isLoading) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center h-64">
+          <div className="text-muted-foreground">Загрузка статистики...</div>
+        </div>
+      </AdminLayout>
+    )
   }
 
-  const recentOrders = []
+  if (error || !data) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center h-64">
+          <div className="text-destructive">Ошибка загрузки статистики</div>
+        </div>
+      </AdminLayout>
+    )
+  }
+
+  const stats = data
+  const recentOrders = data.recentOrders
 
   return (
     <AdminLayout>
@@ -166,7 +184,20 @@ export default function AdminDashboardPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                {/* TODO: Display recent orders */}
+                {recentOrders.map((order) => (
+                  <div key={order.id} className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0">
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">{order.orderNumber}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {format(new Date(order.createdAt), "dd MMMM yyyy, HH:mm", { locale: ru })}
+                      </p>
+                    </div>
+                    <div className="text-right space-y-1">
+                      <p className="text-sm font-medium">{parseFloat(order.total).toLocaleString()} ₽</p>
+                      <p className="text-xs text-muted-foreground capitalize">{order.status}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </CardContent>

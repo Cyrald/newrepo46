@@ -52,6 +52,7 @@ import { eq, and, desc, sql, like, gte, lte, or } from "drizzle-orm";
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, data: Partial<User>): Promise<User | undefined>;
   
@@ -146,6 +147,10 @@ export class DatabaseStorage implements IStorage {
   async getUserByEmail(email: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
     return user;
+  }
+
+  async getUsers(): Promise<User[]> {
+    return db.select().from(users).orderBy(desc(users.createdAt));
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
@@ -319,6 +324,16 @@ export class DatabaseStorage implements IStorage {
     await db
       .update(products)
       .set({ viewCount: sql`${products.viewCount} + 1` })
+      .where(eq(products.id, id));
+  }
+
+  async decreaseProductStock(id: string, quantity: number): Promise<void> {
+    await db
+      .update(products)
+      .set({ 
+        stockQuantity: sql`${products.stockQuantity} - ${quantity}`,
+        updatedAt: new Date()
+      })
       .where(eq(products.id, id));
   }
 

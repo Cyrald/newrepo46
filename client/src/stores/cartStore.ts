@@ -44,8 +44,19 @@ export const useCartStore = create<CartState>((set, get) => ({
   },
 
   updateQuantity: (productId: string, quantity: number) => {
-    if (quantity <= 0) {
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      console.error(`[Cart] Invalid quantity: ${quantity}`);
+      return;
+    }
+
+    if (quantity === 0) {
       get().removeItem(productId);
+      return;
+    }
+
+    const item = get().items.find((i) => i.productId === productId);
+    if (item?.product?.stockQuantity !== undefined && quantity > item.product.stockQuantity) {
+      console.error(`[Cart] Cannot set quantity ${quantity} - exceeds stock ${item.product.stockQuantity} for ${item.product.name}`);
       return;
     }
 
@@ -67,22 +78,51 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   calculateTotals: () => {
     const items = get().items;
-    const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
+    let hasErrors = false;
+    
+    const itemCount = items.reduce((sum, item) => {
+      if (typeof item.quantity !== 'number' || item.quantity < 1 || !Number.isInteger(item.quantity)) {
+        console.error(`[Cart] Invalid quantity for item ${item.productId}:`, item.quantity);
+        hasErrors = true;
+        return sum;
+      }
+      return sum + item.quantity;
+    }, 0);
+    
     const total = items.reduce((sum, item) => {
-      // Skip items without product or price
-      if (!item.product?.price) return sum;
+      if (!item.product) {
+        console.warn(`[Cart] Item ${item.id} missing product data`);
+        hasErrors = true;
+        return sum;
+      }
       
-      // Parse decimal string to number
+      if (!item.product.price) {
+        console.error(`[Cart] Item ${item.product.id} (${item.product.name}) missing price`);
+        hasErrors = true;
+        return sum;
+      }
+      
       const price = typeof item.product.price === 'string' 
         ? parseFloat(item.product.price) 
         : Number(item.product.price);
       
-      // Skip invalid prices
-      if (isNaN(price) || price < 0) return sum;
+      if (isNaN(price) || price < 0) {
+        console.error(`[Cart] Invalid price for ${item.product.name}: ${item.product.price}`);
+        hasErrors = true;
+        return sum;
+      }
+      
+      if (typeof item.quantity !== 'number' || item.quantity < 1) {
+        return sum;
+      }
       
       return sum + (price * item.quantity);
     }, 0);
 
-    set({ itemCount, total });
+    if (hasErrors) {
+      console.warn('[Cart] Errors detected during total calculation. Some items may not be included.');
+    }
+
+    set({ itemCount, total: Math.max(0, total) });
   },
 }));

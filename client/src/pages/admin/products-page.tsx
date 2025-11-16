@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { Plus, Search, MoreHorizontal, Pencil, Trash2, Eye } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
 import { AdminLayout } from "@/components/admin-layout"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,21 +20,35 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { productsApi } from "@/lib/api"
 
 export default function AdminProductsPage() {
   const [searchQuery, setSearchQuery] = useState("")
 
-  // TODO: Fetch products from API
-  const products = []
+  const { data, isLoading } = useQuery({
+    queryKey: ["adminProducts"],
+    queryFn: () => productsApi.getAll({ limit: 10000 }),
+  })
 
-  const filteredProducts = products.filter((product: any) =>
+  const products = data?.products || []
+
+  const filteredProducts = products.filter((product) =>
     product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     product.sku?.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
   const handleDeleteProduct = (productId: string) => {
-    // TODO: Implement product deletion
     console.log("Delete product:", productId)
+  }
+
+  if (isLoading) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center h-64">
+          <div className="text-muted-foreground">Загрузка товаров...</div>
+        </div>
+      </AdminLayout>
+    )
   }
 
   return (
@@ -94,15 +109,15 @@ export default function AdminProductsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredProducts.map((product: any) => (
+                    {filteredProducts.map((product) => (
                       <TableRow key={product.id}>
                         <TableCell className="font-medium">{product.name}</TableCell>
                         <TableCell>{product.sku || "—"}</TableCell>
-                        <TableCell>{product.category?.name || "—"}</TableCell>
-                        <TableCell>{parseFloat(product.price)} ₽</TableCell>
+                        <TableCell>—</TableCell>
+                        <TableCell>{parseFloat(product.price).toLocaleString()} ₽</TableCell>
                         <TableCell>
-                          {product.inStock ? (
-                            <Badge variant="default">В наличии</Badge>
+                          {product.stockQuantity > 0 ? (
+                            <Badge variant="default">{product.stockQuantity} шт</Badge>
                           ) : (
                             <Badge variant="destructive">Нет</Badge>
                           )}

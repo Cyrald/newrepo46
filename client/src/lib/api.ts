@@ -392,10 +392,18 @@ export const adminApi = {
   getStats: () =>
     fetchApi<{
       totalRevenue: number;
+      revenueChange: number;
       totalOrders: number;
+      ordersChange: number;
       totalCustomers: number;
+      customersChange: number;
       totalProducts: number;
+      productsChange: number;
+      recentOrders: Order[];
     }>("/api/admin/stats"),
+
+  getUsers: () =>
+    fetchApi<Array<User & { roles: string[] }>>("/api/admin/users"),
 };
 
 // Чат поддержки

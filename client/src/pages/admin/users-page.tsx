@@ -1,5 +1,8 @@
 import { useState } from "react"
 import { Plus, Search, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
+import { format } from "date-fns"
+import { ru } from "date-fns/locale"
 import { AdminLayout } from "@/components/admin-layout"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,21 +22,23 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { adminApi } from "@/lib/api"
 
 export default function AdminUsersPage() {
   const [searchQuery, setSearchQuery] = useState("")
 
-  // TODO: Fetch users from API
-  const users = []
+  const { data: users = [], isLoading } = useQuery({
+    queryKey: ["adminUsers"],
+    queryFn: adminApi.getUsers,
+  })
 
-  const filteredUsers = users.filter((user: any) =>
+  const filteredUsers = users.filter((user) =>
     user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
     user.firstName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     user.lastName?.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
   const handleDeleteUser = (userId: string) => {
-    // TODO: Implement user deletion
     console.log("Delete user:", userId)
   }
 
@@ -48,6 +53,26 @@ export default function AdminUsersPage() {
       default:
         return "outline"
     }
+  }
+
+  const getRoleLabel = (role: string) => {
+    const labels: Record<string, string> = {
+      admin: "Админ",
+      marketer: "Маркетолог",
+      consultant: "Консультант",
+      customer: "Клиент",
+    }
+    return labels[role] || role
+  }
+
+  if (isLoading) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center h-64">
+          <div className="text-muted-foreground">Загрузка пользователей...</div>
+        </div>
+      </AdminLayout>
+    )
   }
 
   return (
@@ -100,23 +125,31 @@ export default function AdminUsersPage() {
                     <TableRow>
                       <TableHead>Email</TableHead>
                       <TableHead>Имя</TableHead>
-                      <TableHead>Роль</TableHead>
+                      <TableHead>Роли</TableHead>
                       <TableHead>Статус</TableHead>
                       <TableHead>Дата регистрации</TableHead>
                       <TableHead className="w-[70px]"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredUsers.map((user: any) => (
+                    {filteredUsers.map((user) => (
                       <TableRow key={user.id}>
                         <TableCell className="font-medium">{user.email}</TableCell>
                         <TableCell>
                           {user.firstName} {user.lastName}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={getRoleBadgeVariant(user.role)}>
-                            {user.role}
-                          </Badge>
+                          <div className="flex gap-1 flex-wrap">
+                            {user.roles.length > 0 ? (
+                              user.roles.map((role) => (
+                                <Badge key={role} variant={getRoleBadgeVariant(role)}>
+                                  {getRoleLabel(role)}
+                                </Badge>
+                              ))
+                            ) : (
+                              <Badge variant="outline">Клиент</Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <Badge variant={user.isEmailVerified ? "default" : "secondary"}>
@@ -124,7 +157,7 @@ export default function AdminUsersPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {new Date(user.createdAt).toLocaleDateString("ru-RU")}
+                          {format(new Date(user.createdAt), "dd.MM.yyyy", { locale: ru })}
                         </TableCell>
                         <TableCell>
                           <DropdownMenu>
