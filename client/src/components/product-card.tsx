@@ -8,11 +8,11 @@ import { Product } from "@shared/schema"
 interface ProductCardProps {
   product: Product & { images?: { url: string }[] }
   onAddToCart?: (productId: string) => void
-  onAddToWishlist?: (productId: string) => void
+  onToggleWishlist?: (productId: string) => void
   isInWishlist?: boolean
 }
 
-export function ProductCard({ product, onAddToCart, onAddToWishlist, isInWishlist = false }: ProductCardProps) {
+export function ProductCard({ product, onAddToCart, onToggleWishlist, isInWishlist = false }: ProductCardProps) {
   const hasDiscount = parseFloat(product.discountPercentage) > 0
   const discountedPrice = hasDiscount
     ? parseFloat(product.price) * (1 - parseFloat(product.discountPercentage) / 100)
@@ -53,13 +53,13 @@ export function ProductCard({ product, onAddToCart, onAddToWishlist, isInWishlis
 
           {/* Quick actions on hover */}
           <div className="absolute right-1.5 top-1.5 flex flex-col gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-            {onAddToWishlist && (
+            {onToggleWishlist && (
               <Button
                 size="icon"
                 variant="secondary"
                 onClick={(e) => {
                   e.preventDefault()
-                  onAddToWishlist(product.id)
+                  onToggleWishlist(product.id)
                 }}
                 data-testid={`button-wishlist-${product.id}`}
                 className="h-7 w-7"

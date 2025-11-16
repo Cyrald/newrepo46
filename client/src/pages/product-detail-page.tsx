@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useRoute, Link } from "wouter"
+import { useRoute, Link, useLocation } from "wouter"
 import { ShoppingCart, Heart, Star, Plus, Minus, ArrowLeft } from "lucide-react"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
@@ -13,21 +13,31 @@ import { PageLoadingSkeleton } from "@/components/loading-state"
 import { ProductCard } from "@/components/product-card"
 import { useProduct } from "@/hooks/useProducts"
 import { useAddToCart } from "@/hooks/useCart"
+import { useAddToWishlist, useRemoveFromWishlist, useWishlist } from "@/hooks/useWishlist"
 import { useToast } from "@/hooks/use-toast"
+import { useAuthStore } from "@/stores/authStore"
 
 export default function ProductDetailPage() {
   const [, params] = useRoute("/products/:id")
   const productId = params?.id || ""
+  const [location, setLocation] = useLocation()
   
   const { toast } = useToast()
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
   const { data: product, isLoading } = useProduct(productId)
   const addToCartMutation = useAddToCart()
+  const addToWishlist = useAddToWishlist()
+  const removeFromWishlist = useRemoveFromWishlist()
+  const { data: wishlistItems } = useWishlist()
 
   const [quantity, setQuantity] = useState(1)
   const [selectedImage, setSelectedImage] = useState(0)
-  const [isInWishlist, setIsInWishlist] = useState(false)
 
   const relatedProducts = []
+  
+  // Check if product is in wishlist
+  const wishlistProductIds = new Set((wishlistItems || []).map((item: any) => item.productId))
+  const isInWishlist = wishlistProductIds.has(productId)
 
   if (isLoading) {
     return <PageLoadingSkeleton />
@@ -72,8 +82,38 @@ export default function ProductDetailPage() {
     }
   }
 
-  const handleToggleWishlist = () => {
-    setIsInWishlist(!isInWishlist)
+  const handleToggleWishlist = async () => {
+    if (!isAuthenticated) {
+      toast({
+        title: "Требуется вход",
+        description: "Пожалуйста, войдите чтобы добавить товар в избранное",
+        variant: "default",
+      })
+      setLocation(`/login?returnUrl=${location}`)
+      return
+    }
+    
+    try {
+      if (isInWishlist) {
+        await removeFromWishlist.mutateAsync(productId)
+        toast({
+          title: "Удалено из избранного",
+          description: "Товар удалён из избранного",
+        })
+      } else {
+        await addToWishlist.mutateAsync(productId)
+        toast({
+          title: "Добавлено в избранное",
+          description: "Товар добавлен в избранное",
+        })
+      }
+    } catch (error: any) {
+      toast({
+        title: "Ошибка",
+        description: error.message || "Не удалось изменить избранное",
+        variant: "destructive",
+      })
+    }
   }
 
   const images = product.images || []

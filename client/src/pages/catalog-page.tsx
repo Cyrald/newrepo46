@@ -29,7 +29,7 @@ import { Input } from "@/components/ui/input"
 import { useProducts } from "@/hooks/useProducts"
 import { useCategories } from "@/hooks/useCategories"
 import { useAddToCart } from "@/hooks/useCart"
-import { useAddToWishlist, useWishlist } from "@/hooks/useWishlist"
+import { useAddToWishlist, useRemoveFromWishlist, useWishlist } from "@/hooks/useWishlist"
 import { useToast } from "@/hooks/use-toast"
 import { useAuthStore } from "@/stores/authStore"
 
@@ -60,11 +60,12 @@ export default function CatalogPage() {
     sortBy: sortBy,
     search: searchQuery || undefined,
     page: currentPage,
-    limit: 12,
+    limit: 30,
   })
 
   const addToCart = useAddToCart()
   const addToWishlist = useAddToWishlist()
+  const removeFromWishlist = useRemoveFromWishlist()
   const { data: wishlistItems } = useWishlist()
   const { toast } = useToast()
 
@@ -152,7 +153,7 @@ export default function CatalogPage() {
     }
   }
 
-  const handleAddToWishlist = async (productId: string) => {
+  const handleToggleWishlist = async (productId: string) => {
     // Require authentication for wishlist
     if (!isAuthenticated) {
       toast({
@@ -164,12 +165,22 @@ export default function CatalogPage() {
       return
     }
     
+    const isInWishlist = wishlistProductIds.has(productId)
+    
     try {
-      await addToWishlist.mutateAsync(productId)
-      toast({
-        title: "Добавлено в избранное",
-        description: "Товар добавлен в избранное",
-      })
+      if (isInWishlist) {
+        await removeFromWishlist.mutateAsync(productId)
+        toast({
+          title: "Удалено из избранного",
+          description: "Товар удалён из избранного",
+        })
+      } else {
+        await addToWishlist.mutateAsync(productId)
+        toast({
+          title: "Добавлено в избранное",
+          description: "Товар добавлен в избранное",
+        })
+      }
     } catch (error: any) {
       toast({
         title: "Ошибка",
@@ -342,13 +353,13 @@ export default function CatalogPage() {
                 />
               ) : (
                 <>
-                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                     {products.map((product: any) => (
                       <ProductCard 
                         key={product.id} 
                         product={product}
                         onAddToCart={handleAddToCart}
-                        onAddToWishlist={isAuthenticated ? handleAddToWishlist : undefined}
+                        onToggleWishlist={isAuthenticated ? handleToggleWishlist : undefined}
                         isInWishlist={wishlistProductIds.has(product.id)}
                       />
                     ))}

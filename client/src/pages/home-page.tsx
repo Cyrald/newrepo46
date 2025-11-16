@@ -18,7 +18,7 @@ export default function HomePage() {
   const { data: categories, isLoading: categoriesLoading } = useCategories()
   const { data: newProductsData, isLoading: productsLoading } = useProducts({
     sortBy: "newest",
-    limit: 4,
+    limit: 6,
   })
   const { data: wishlistItems } = useWishlist()
 
@@ -101,8 +101,8 @@ export default function HomePage() {
                   </Button>
                 </Link>
               </div>
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {newProducts.slice(0, 4).map((product: any) => (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+                {newProducts.slice(0, 6).map((product: any) => (
                   <ProductCard 
                     key={product.id} 
                     product={product}
