@@ -42,7 +42,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useToast } from "@/hooks/use-toast"
 import { productsApi } from "@/lib/api"
-import { useDeleteProduct } from "@/hooks/useProducts"
+import { useArchiveProduct, useUnarchiveProduct } from "@/hooks/useProducts"
 import { useCategories } from "@/hooks/useCategories"
 import type { Product } from "@shared/schema"
 
@@ -110,7 +110,8 @@ export default function AdminProductsPage() {
   const { data: categoriesData } = useCategories()
   const categories = categoriesData || []
 
-  const deleteProduct = useDeleteProduct()
+  const archiveProduct = useArchiveProduct()
+  const unarchiveProduct = useUnarchiveProduct()
 
   const products = data?.products || []
 
@@ -157,11 +158,27 @@ export default function AdminProductsPage() {
     setIsArchiveDialogOpen(true)
   }
 
+  const handleUnarchiveProduct = async (productId: string) => {
+    try {
+      await unarchiveProduct.mutateAsync(productId)
+      toast({
+        title: "Товар восстановлен",
+        description: "Товар успешно возвращён в каталог",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Ошибка",
+        description: error.message || "Не удалось восстановить товар",
+        variant: "destructive",
+      })
+    }
+  }
+
   const confirmArchive = async () => {
     if (!productToArchive) return
 
     try {
-      await deleteProduct.mutateAsync(productToArchive)
+      await archiveProduct.mutateAsync(productToArchive)
       toast({
         title: "Товар архивирован",
         description: "Товар успешно перенесён в архив",
@@ -318,13 +335,23 @@ export default function AdminProductsPage() {
                                     <Pencil className="mr-2 h-4 w-4" />
                                     Редактировать
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    className="text-orange-600"
-                                    onClick={() => handleArchiveProduct(product.id)}
-                                  >
-                                    <Archive className="mr-2 h-4 w-4" />
-                                    Архивировать
-                                  </DropdownMenuItem>
+                                  {activeTab === "published" ? (
+                                    <DropdownMenuItem
+                                      className="text-orange-600"
+                                      onClick={() => handleArchiveProduct(product.id)}
+                                    >
+                                      <Archive className="mr-2 h-4 w-4" />
+                                      Архивировать
+                                    </DropdownMenuItem>
+                                  ) : (
+                                    <DropdownMenuItem
+                                      className="text-green-600"
+                                      onClick={() => handleUnarchiveProduct(product.id)}
+                                    >
+                                      <Archive className="mr-2 h-4 w-4" />
+                                      Разархивировать
+                                    </DropdownMenuItem>
+                                  )}
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             </TableCell>

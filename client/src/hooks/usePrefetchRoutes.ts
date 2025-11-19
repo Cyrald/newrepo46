@@ -57,23 +57,21 @@ function prefetchRoute(route: string): void {
     });
 }
 
-function shouldPrefetch(): boolean {
-  if (typeof navigator === 'undefined') return false;
-
-  const connection = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
+// Helper function to get accessible routes based on auth status and roles
+function getAccessibleRoutes(isAuthenticated: boolean, hasStaffRole: boolean): string[] {
+  const publicRoutes = ['/login', '/register', '/privacy-policy'];
+  const authenticatedRoutes = ['/catalog', '/cart', '/wishlist', '/products', '/profile', '/checkout'];
+  const adminRoutes = ['/admin', '/admin/products', '/admin/categories', '/admin/orders', '/admin/promocodes', '/admin/users', '/admin/support'];
   
-  if (connection) {
-    if (connection.saveData) {
-      return false;
-    }
-    
-    const slowConnections = ['slow-2g', '2g'];
-    if (slowConnections.includes(connection.effectiveType)) {
-      return false;
-    }
+  if (!isAuthenticated) {
+    return [...publicRoutes, '/catalog', '/products'];
   }
-
-  return true;
+  
+  if (hasStaffRole) {
+    return [...authenticatedRoutes, ...adminRoutes, '/privacy-policy'];
+  }
+  
+  return [...authenticatedRoutes, '/privacy-policy'];
 }
 
 export function usePrefetchRoutes() {
@@ -82,89 +80,52 @@ export function usePrefetchRoutes() {
   const user = useAuthStore((state) => state.user);
   const previousAuthState = useRef<boolean | null>(null);
   const [location] = useLocation();
+  const prefetchStarted = useRef(false);
 
   useEffect(() => {
-    if (!authInitialized || !shouldPrefetch()) {
+    if (!authInitialized || prefetchStarted.current) {
       return;
     }
 
     const hasStaffRole = user?.roles?.some(role => 
       ['admin', 'marketer', 'consultant'].includes(role)
-    );
+    ) ?? false;
     
-    const isOnAdminPage = (location || '').startsWith('/admin');
-
-    const prefetchWithDelay = (routes: string[], delay: number) => {
-      setTimeout(() => {
-        if (shouldPrefetch()) {
-          routes.forEach(route => {
-            safeRequestIdleCallback(() => prefetchRoute(route), { timeout: 2000 });
-          });
-        }
-      }, delay);
-    };
-
-    if (!isAuthenticated) {
-      prefetchWithDelay(['/login', '/register'], 0);
-      
-      prefetchWithDelay(['/catalog', '/products'], 1000);
-      
-      prefetchWithDelay(['/privacy-policy'], 5000);
-    } else {
-      prefetchWithDelay(['/catalog', '/cart', '/wishlist', '/products'], 0);
-      
-      prefetchWithDelay(['/profile', '/checkout'], 3000);
-      
-      prefetchWithDelay(['/privacy-policy'], 5000);
-
-      if (hasStaffRole) {
-        prefetchWithDelay([
-          '/admin',
-          '/admin/products',
-          '/admin/categories',
-          '/admin/orders',
-          '/admin/promocodes',
-          '/admin/users',
-          '/admin/support'
-        ], 7000);
-      }
+    // Get all accessible routes based on auth status
+    const accessibleRoutes = getAccessibleRoutes(isAuthenticated, hasStaffRole);
+    
+    // Filter out already prefetched routes
+    const routesToPrefetch = accessibleRoutes.filter(route => !prefetchedRoutes.has(route));
+    
+    if (routesToPrefetch.length === 0) {
+      return;
     }
 
-    if (previousAuthState.current === false && isAuthenticated === true) {
-      console.log('🔄 User just authenticated, loading protected routes...');
-      
-      safeRequestIdleCallback(() => {
-        prefetchRoute('/cart');
-        prefetchRoute('/wishlist');
-        prefetchRoute('/profile');
+    // AGGRESSIVE PREFETCHING: Load everything in parallel immediately
+    console.log(`🚀 Starting aggressive prefetch of ${routesToPrefetch.length} routes...`);
+    prefetchStarted.current = true;
+    
+    // Use queueMicrotask to avoid blocking render
+    queueMicrotask(() => {
+      const loaders = routesToPrefetch.map(route => {
+        const loader = routeComponentMap[route];
+        if (!loader) return Promise.resolve();
         
-        if (hasStaffRole) {
-          console.log('👤 Staff user detected, preloading admin routes...');
-          prefetchWithDelay([
-            '/admin',
-            '/admin/products',
-            '/admin/categories',
-            '/admin/orders',
-            '/admin/promocodes',
-            '/admin/users',
-            '/admin/support'
-          ], 1000);
-        }
+        return loader()
+          .then(() => {
+            prefetchedRoutes.add(route);
+            console.log(`✅ Prefetched: ${route}`);
+          })
+          .catch((error) => {
+            console.error(`❌ Failed to prefetch ${route}:`, error);
+          });
       });
-    }
-    
-    if (isOnAdminPage && hasStaffRole && !prefetchedRoutes.has('/admin')) {
-      console.log('📍 On admin page, prefetching all admin routes...');
-      safeRequestIdleCallback(() => {
-        prefetchRoute('/admin');
-        prefetchRoute('/admin/products');
-        prefetchRoute('/admin/categories');
-        prefetchRoute('/admin/orders');
-        prefetchRoute('/admin/promocodes');
-        prefetchRoute('/admin/users');
-        prefetchRoute('/admin/support');
+      
+      // Load all routes in parallel
+      Promise.allSettled(loaders).then(() => {
+        console.log(`🎉 Aggressive prefetch complete! Loaded ${routesToPrefetch.length} routes.`);
       });
-    }
+    });
 
     previousAuthState.current = isAuthenticated;
   }, [isAuthenticated, authInitialized, user, location]);
@@ -172,36 +133,30 @@ export function usePrefetchRoutes() {
 
 export function usePrefetchFromReturnUrl() {
   useEffect(() => {
-    if (!shouldPrefetch()) {
-      return;
-    }
-
     const params = new URLSearchParams(window.location.search);
     const returnUrl = params.get('returnUrl');
 
     if (returnUrl) {
-      console.log(`🎯 Detected returnUrl: ${returnUrl}, prefetching...`);
+      console.log(`🎯 Detected returnUrl: ${returnUrl}, prefetching immediately...`);
       
-      safeRequestIdleCallback(() => {
-        const normalizedUrl = returnUrl.split('?')[0].split('#')[0];
-        
-        if (normalizedUrl.startsWith('/cart')) {
-          prefetchRoute('/cart');
-        } else if (normalizedUrl.startsWith('/wishlist')) {
-          prefetchRoute('/wishlist');
-        } else if (normalizedUrl.startsWith('/profile')) {
-          prefetchRoute('/profile');
-        } else if (normalizedUrl.startsWith('/checkout')) {
-          prefetchRoute('/checkout');
-        } else if (normalizedUrl.startsWith('/admin')) {
-          const segments = normalizedUrl.split('/');
-          if (segments.length === 2) {
-            prefetchRoute('/admin');
-          } else if (segments.length === 3) {
-            prefetchRoute(`/admin/${segments[2]}`);
-          }
+      const normalizedUrl = returnUrl.split('?')[0].split('#')[0];
+      
+      if (normalizedUrl.startsWith('/cart')) {
+        prefetchRoute('/cart');
+      } else if (normalizedUrl.startsWith('/wishlist')) {
+        prefetchRoute('/wishlist');
+      } else if (normalizedUrl.startsWith('/profile')) {
+        prefetchRoute('/profile');
+      } else if (normalizedUrl.startsWith('/checkout')) {
+        prefetchRoute('/checkout');
+      } else if (normalizedUrl.startsWith('/admin')) {
+        const segments = normalizedUrl.split('/');
+        if (segments.length === 2) {
+          prefetchRoute('/admin');
+        } else if (segments.length === 3) {
+          prefetchRoute(`/admin/${segments[2]}`);
         }
-      }, { timeout: 500 });
+      }
     }
   }, []);
 }

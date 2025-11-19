@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Product } from "@shared/schema"
+import { useCartStore } from "@/stores/cartStore"
 
 interface ProductCardProps {
   product: Product & { images?: { url: string }[] }
@@ -16,6 +17,10 @@ interface ProductCardProps {
 export function ProductCard({ product, onAddToCart, onToggleWishlist, isInWishlist = false }: ProductCardProps) {
   const [isWishlistLoading, setIsWishlistLoading] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
+  
+  // Get cart quantity for this product
+  const cartItems = useCartStore((state) => state.items)
+  const cartQuantity = cartItems.find(item => item.productId === product.id)?.quantity || 0
   const hasDiscount = parseFloat(product.discountPercentage) > 0
   const discountedPrice = hasDiscount
     ? parseFloat(product.price) * (1 - parseFloat(product.discountPercentage) / 100)
@@ -25,18 +30,20 @@ export function ProductCard({ product, onAddToCart, onToggleWishlist, isInWishli
 
   const handleWishlistClick = async (e: React.MouseEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     if (isWishlistLoading || !onToggleWishlist) return
     
-    // Start animation immediately
+    // Quick "tap" animation like Instagram
     setIsAnimating(true)
     setIsWishlistLoading(true)
+    
+    // Animation lasts 200ms regardless of API response
+    setTimeout(() => setIsAnimating(false), 200)
     
     try {
       await onToggleWishlist(product.id)
     } finally {
       setIsWishlistLoading(false)
-      // Keep animation for a bit longer
-      setTimeout(() => setIsAnimating(false), 300)
     }
   }
 
@@ -83,11 +90,11 @@ export function ProductCard({ product, onAddToCart, onToggleWishlist, isInWishli
                 className="h-7 w-7"
               >
                 <Heart 
-                  className={`h-3.5 w-3.5 transition-all duration-200 ${
-                    isInWishlist || isAnimating 
-                      ? "fill-red-500 text-red-500 scale-110" 
-                      : "scale-100"
-                  } ${isAnimating ? "animate-pulse" : ""}`} 
+                  className={`h-3.5 w-3.5 transition-transform duration-200 ${
+                    isInWishlist 
+                      ? "fill-red-500 text-red-500" 
+                      : ""
+                  } ${isAnimating ? "scale-125" : "scale-100"}`} 
                 />
               </Button>
             )}
@@ -127,13 +134,20 @@ export function ProductCard({ product, onAddToCart, onToggleWishlist, isInWishli
         <div className="mt-auto">
           {product.stockQuantity > 0 ? (
             <Button
-              className="w-full h-8 text-xs"
+              className="w-full h-8 text-xs relative"
               size="sm"
               onClick={() => onAddToCart?.(product.id)}
               data-testid={`button-add-to-cart-${product.id}`}
             >
               <ShoppingCart className="mr-1.5 h-3.5 w-3.5" />
               В корзину
+              {cartQuantity > 0 && (
+                <Badge 
+                  className="absolute -right-1 -top-1 h-5 min-w-[1.25rem] px-1 text-[10px] bg-[#ef4444] hover:bg-[#ef4444] text-white border-0 pointer-events-none"
+                >
+                  {cartQuantity}
+                </Badge>
+              )}
             </Button>
           ) : (
             <Button

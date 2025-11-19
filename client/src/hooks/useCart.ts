@@ -28,6 +28,7 @@ export function useCart() {
 
 export function useAddToCart() {
   const queryClient = useQueryClient();
+  const setItems = useCartStore((state) => state.setItems);
 
   return useMutation({
     mutationFn: (data: { productId: string; quantity: number }) =>
@@ -40,8 +41,11 @@ export function useAddToCart() {
       const previousCart = queryClient.getQueryData(["cart"]);
 
       // Optimistically update to the new value
-      queryClient.setQueryData(["cart"], (old: any) => {
-        if (!old) return old;
+      const updatedCart = queryClient.setQueryData(["cart"], (old: any) => {
+        // If cart is empty, create new cart with first item
+        if (!old || old.length === 0) {
+          return [{ productId: newItem.productId, quantity: newItem.quantity }];
+        }
         
         const existingItemIndex = old.findIndex(
           (item: any) => item.productId === newItem.productId
@@ -61,12 +65,18 @@ export function useAddToCart() {
         }
       });
 
+      // Sync with cartStore for instant UI updates
+      if (updatedCart && Array.isArray(updatedCart)) {
+        setItems(updatedCart);
+      }
+
       return { previousCart };
     },
     onError: (_err, _newItem, context) => {
       // Rollback to the previous value on error
       if (context?.previousCart) {
         queryClient.setQueryData(["cart"], context.previousCart);
+        setItems(context.previousCart as any);
       }
     },
     onSettled: () => {

@@ -97,19 +97,18 @@ export function Header() {
             size="icon"
             asChild
             data-testid="link-cart"
+            className="relative"
           >
             <Link href="/cart">
-              <div className="relative">
-                <ShoppingCart className="h-5 w-5" />
-                {cartItemsCount > 0 && (
-                  <Badge
-                    className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center px-0 text-xs bg-[#ef4444] hover:bg-[#ef4444] text-white border-0"
-                    data-testid="badge-cart-count"
-                  >
-                    {cartItemsCount > 99 ? "99+" : cartItemsCount}
-                  </Badge>
-                )}
-              </div>
+              <ShoppingCart className="h-5 w-5" />
+              {cartItemsCount > 0 && (
+                <Badge
+                  className="absolute -right-1 -top-1 flex h-5 min-w-[1.25rem] items-center justify-center px-1 text-[10px] bg-[#ef4444] hover:bg-[#ef4444] text-white border-0 pointer-events-none"
+                  data-testid="badge-cart-count"
+                >
+                  {cartItemsCount > 99 ? "99+" : cartItemsCount}
+                </Badge>
+              )}
             </Link>
           </Button>
 
