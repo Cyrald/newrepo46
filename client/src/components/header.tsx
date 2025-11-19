@@ -103,8 +103,7 @@ export function Header() {
                 <ShoppingCart className="h-5 w-5" />
                 {cartItemsCount > 0 && (
                   <Badge
-                    variant="destructive"
-                    className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center px-1 text-xs"
+                    className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center px-0 text-xs bg-[#ef4444] hover:bg-[#ef4444] text-white border-0"
                     data-testid="badge-cart-count"
                   >
                     {cartItemsCount > 99 ? "99+" : cartItemsCount}

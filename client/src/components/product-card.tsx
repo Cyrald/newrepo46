@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { Link } from "wouter"
 import { ShoppingCart, Heart, Eye } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
@@ -13,12 +14,31 @@ interface ProductCardProps {
 }
 
 export function ProductCard({ product, onAddToCart, onToggleWishlist, isInWishlist = false }: ProductCardProps) {
+  const [isWishlistLoading, setIsWishlistLoading] = useState(false)
+  const [isAnimating, setIsAnimating] = useState(false)
   const hasDiscount = parseFloat(product.discountPercentage) > 0
   const discountedPrice = hasDiscount
     ? parseFloat(product.price) * (1 - parseFloat(product.discountPercentage) / 100)
     : parseFloat(product.price)
   
   const firstImage = product.images?.[0]?.url
+
+  const handleWishlistClick = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (isWishlistLoading || !onToggleWishlist) return
+    
+    // Start animation immediately
+    setIsAnimating(true)
+    setIsWishlistLoading(true)
+    
+    try {
+      await onToggleWishlist(product.id)
+    } finally {
+      setIsWishlistLoading(false)
+      // Keep animation for a bit longer
+      setTimeout(() => setIsAnimating(false), 300)
+    }
+  }
 
   return (
     <Card className="group relative overflow-hidden transition-all duration-200 flex flex-col">
@@ -57,14 +77,18 @@ export function ProductCard({ product, onAddToCart, onToggleWishlist, isInWishli
               <Button
                 size="icon"
                 variant="secondary"
-                onClick={(e) => {
-                  e.preventDefault()
-                  onToggleWishlist(product.id)
-                }}
+                onClick={handleWishlistClick}
+                disabled={isWishlistLoading}
                 data-testid={`button-wishlist-${product.id}`}
                 className="h-7 w-7"
               >
-                <Heart className={`h-3.5 w-3.5 ${isInWishlist ? "fill-red-500 text-red-500" : ""}`} />
+                <Heart 
+                  className={`h-3.5 w-3.5 transition-all duration-200 ${
+                    isInWishlist || isAnimating 
+                      ? "fill-red-500 text-red-500 scale-110" 
+                      : "scale-100"
+                  } ${isAnimating ? "animate-pulse" : ""}`} 
+                />
               </Button>
             )}
           </div>

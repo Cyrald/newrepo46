@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react"
-import { Plus, Search, MoreHorizontal, Pencil, Trash2, Eye, ImageIcon } from "lucide-react"
+import { Plus, Search, MoreHorizontal, Pencil, Archive, Eye, ImageIcon, ArrowUpAZ, ArrowDownAZ } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { useLocation } from "wouter"
 import { AdminLayout } from "@/components/admin-layout"
@@ -20,6 +20,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -89,10 +96,11 @@ export default function AdminProductsPage() {
   const [, setLocation] = useLocation()
   const [searchQuery, setSearchQuery] = useState("")
   const [activeTab, setActiveTab] = useState<"published" | "archived">("published")
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc")
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
-  const [productToDelete, setProductToDelete] = useState<string | null>(null)
+  const [isArchiveDialogOpen, setIsArchiveDialogOpen] = useState(false)
+  const [productToArchive, setProductToArchive] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ["adminProducts"],
@@ -112,15 +120,23 @@ export default function AdminProductsPage() {
     return acc
   }, {} as Record<string, string>)
 
-  // Filter by archive status first, then by search
+  // Filter by archive status first, then by search, then sort
   const filteredByStatus = products.filter((product) =>
     activeTab === "published" ? !product.isArchived : product.isArchived
   )
 
-  const filteredProducts = filteredByStatus.filter((product) =>
+  const filteredBySearch = filteredByStatus.filter((product) =>
     product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     product.sku?.toLowerCase().includes(searchQuery.toLowerCase())
   )
+
+  const filteredProducts = [...filteredBySearch].sort((a, b) => {
+    const nameA = a.name.toLowerCase()
+    const nameB = b.name.toLowerCase()
+    return sortOrder === "asc" 
+      ? nameA.localeCompare(nameB, 'ru')
+      : nameB.localeCompare(nameA, 'ru')
+  })
 
   const handleAddProduct = () => {
     setSelectedProduct(null)
@@ -136,29 +152,29 @@ export default function AdminProductsPage() {
     setLocation(`/products/${productId}`)
   }
 
-  const handleDeleteProduct = (productId: string) => {
-    setProductToDelete(productId)
-    setIsDeleteDialogOpen(true)
+  const handleArchiveProduct = (productId: string) => {
+    setProductToArchive(productId)
+    setIsArchiveDialogOpen(true)
   }
 
-  const confirmDelete = async () => {
-    if (!productToDelete) return
+  const confirmArchive = async () => {
+    if (!productToArchive) return
 
     try {
-      await deleteProduct.mutateAsync(productToDelete)
+      await deleteProduct.mutateAsync(productToArchive)
       toast({
-        title: "Товар удален",
-        description: "Товар успешно удален из каталога",
+        title: "Товар архивирован",
+        description: "Товар успешно перенесён в архив",
       })
     } catch (error: any) {
       toast({
         title: "Ошибка",
-        description: error.message || "Не удалось удалить товар",
+        description: error.message || "Не удалось архивировать товар",
         variant: "destructive",
       })
     } finally {
-      setIsDeleteDialogOpen(false)
-      setProductToDelete(null)
+      setIsArchiveDialogOpen(false)
+      setProductToArchive(null)
     }
   }
 
@@ -202,7 +218,7 @@ export default function AdminProductsPage() {
           </CardHeader>
           <CardContent>
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "published" | "archived")}>
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-4 gap-4">
                 <TabsList>
                   <TabsTrigger value="published">
                     Опубликовано ({publishedCount})
@@ -212,15 +228,37 @@ export default function AdminProductsPage() {
                   </TabsTrigger>
                 </TabsList>
 
-                <div className="relative w-full max-w-sm ml-4">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Поиск по названию или артикулу..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-9"
-                    data-testid="input-search-products"
-                  />
+                <div className="flex items-center gap-2 flex-1">
+                  <div className="relative flex-1 max-w-sm">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      placeholder="Поиск по названию или артикулу..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-9"
+                      data-testid="input-search-products"
+                    />
+                  </div>
+
+                  <Select value={sortOrder} onValueChange={(v) => setSortOrder(v as "asc" | "desc")}>
+                    <SelectTrigger className="w-[200px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="asc">
+                        <div className="flex items-center gap-2">
+                          <ArrowUpAZ className="h-4 w-4" />
+                          По алфавиту А-Я
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="desc">
+                        <div className="flex items-center gap-2">
+                          <ArrowDownAZ className="h-4 w-4" />
+                          По алфавиту Я-А
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
@@ -281,11 +319,11 @@ export default function AdminProductsPage() {
                                     Редактировать
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    className="text-destructive"
-                                    onClick={() => handleDeleteProduct(product.id)}
+                                    className="text-orange-600"
+                                    onClick={() => handleArchiveProduct(product.id)}
                                   >
-                                    <Trash2 className="mr-2 h-4 w-4" />
-                                    Удалить
+                                    <Archive className="mr-2 h-4 w-4" />
+                                    Архивировать
                                   </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
@@ -309,19 +347,19 @@ export default function AdminProductsPage() {
         product={selectedProduct}
       />
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+      {/* Archive Confirmation Dialog */}
+      <AlertDialog open={isArchiveDialogOpen} onOpenChange={setIsArchiveDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить товар?</AlertDialogTitle>
+            <AlertDialogTitle>Архивировать товар?</AlertDialogTitle>
             <AlertDialogDescription>
-              Это действие нельзя отменить. Товар будет архивирован и скрыт из каталога.
+              Товар будет перемещён в архив и скрыт из каталога. Вы сможете восстановить его позже через вкладку "Архив".
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground">
-              Удалить
+            <AlertDialogAction onClick={confirmArchive} className="bg-orange-600 hover:bg-orange-700 text-white">
+              Архивировать
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

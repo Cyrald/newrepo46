@@ -32,7 +32,44 @@ export function useAddToCart() {
   return useMutation({
     mutationFn: (data: { productId: string; quantity: number }) =>
       cartApi.add(data),
-    onSuccess: () => {
+    onMutate: async (newItem) => {
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ["cart"] });
+
+      // Snapshot the previous value
+      const previousCart = queryClient.getQueryData(["cart"]);
+
+      // Optimistically update to the new value
+      queryClient.setQueryData(["cart"], (old: any) => {
+        if (!old) return old;
+        
+        const existingItemIndex = old.findIndex(
+          (item: any) => item.productId === newItem.productId
+        );
+
+        if (existingItemIndex > -1) {
+          // Update existing item quantity
+          const newCart = [...old];
+          newCart[existingItemIndex] = {
+            ...newCart[existingItemIndex],
+            quantity: newCart[existingItemIndex].quantity + newItem.quantity,
+          };
+          return newCart;
+        } else {
+          // Add new item
+          return [...old, { productId: newItem.productId, quantity: newItem.quantity }];
+        }
+      });
+
+      return { previousCart };
+    },
+    onError: (_err, _newItem, context) => {
+      // Rollback to the previous value on error
+      if (context?.previousCart) {
+        queryClient.setQueryData(["cart"], context.previousCart);
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["cart"] });
     },
   });
