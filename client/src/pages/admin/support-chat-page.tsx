@@ -10,7 +10,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Send, MessageCircle, User, ShoppingBag } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Send, MessageCircle, User, ShoppingBag, Archive, FolderClosed, FolderOpen, Search } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { format } from "date-fns"
 import { ru } from "date-fns/locale"
@@ -19,7 +20,9 @@ import type { SupportMessage } from "@shared/schema"
 interface Conversation {
   userId: string
   lastMessage: SupportMessage
-  unreadCount: number
+  status: string
+  archivedAt: Date | null
+  closedAt: Date | null
 }
 
 interface CustomerInfo {
@@ -42,34 +45,55 @@ interface CustomerInfo {
 export default function AdminSupportChatPage() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
   const [message, setMessage] = useState("")
-  const [statusFilter, setStatusFilter] = useState<'active' | 'archived' | 'all'>('active')
+  const [statusFilter, setStatusFilter] = useState<'open' | 'archived' | 'closed'>('open')
+  
+  const [searchEmail, setSearchEmail] = useState("")
+  const [searchDateFrom, setSearchDateFrom] = useState("")
+  const [searchDateTo, setSearchDateTo] = useState("")
+  
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const user = useAuthStore((state) => state.user)
 
-  // Fetch all conversations
   const { data: conversations = [] } = useQuery<Conversation[]>({
     queryKey: ["/api/support/conversations", statusFilter],
     queryFn: async () => {
-      const url = statusFilter === 'all' 
-        ? '/api/support/conversations'
-        : `/api/support/conversations?status=${statusFilter}`;
+      const url = `/api/support/conversations?status=${statusFilter}`;
       const response = await fetch(url, { credentials: 'include' });
       if (!response.ok) throw new Error('Failed to fetch conversations');
       return response.json();
     },
-    refetchInterval: 5000, // Refresh every 5 seconds
+    refetchInterval: 5000,
   })
 
-  // Auto-select first conversation
-  useEffect(() => {
-    if (!selectedUserId && conversations.length > 0) {
-      setSelectedUserId(conversations[0].userId)
-    }
-  }, [conversations, selectedUserId])
+  const { data: closedConversations = [], refetch: refetchClosedSearch } = useQuery<Conversation[]>({
+    queryKey: ["/api/support/closed-search", searchEmail, searchDateFrom, searchDateTo],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (searchEmail) params.append('email', searchEmail);
+      if (searchDateFrom) params.append('dateFrom', searchDateFrom);
+      if (searchDateTo) params.append('dateTo', searchDateTo);
+      
+      const response = await fetch(`/api/support/closed-search?${params.toString()}`, {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Failed to search conversations');
+      return response.json();
+    },
+    enabled: statusFilter === 'closed' && (!!searchEmail || !!searchDateFrom || !!searchDateTo),
+  })
 
-  // Fetch messages for selected user
+  const displayConversations = statusFilter === 'closed' 
+    ? (searchEmail || searchDateFrom || searchDateTo ? closedConversations : [])
+    : conversations
+
+  useEffect(() => {
+    if (!selectedUserId && displayConversations.length > 0) {
+      setSelectedUserId(displayConversations[0].userId)
+    }
+  }, [displayConversations, selectedUserId])
+
   const { data: messages = [], isLoading: messagesLoading } = useQuery<SupportMessage[]>({
     queryKey: ["/api/support/messages", { userId: selectedUserId }],
     queryFn: async () => {
@@ -83,13 +107,11 @@ export default function AdminSupportChatPage() {
     enabled: !!selectedUserId,
   })
 
-  // Fetch customer info
   const { data: customerInfo } = useQuery<CustomerInfo>({
     queryKey: ["/api/support/customer-info", selectedUserId],
     enabled: !!selectedUserId,
   })
 
-  // Send message mutation
   const sendMessageMutation = useMutation<
     SupportMessage,
     Error,
@@ -103,13 +125,9 @@ export default function AdminSupportChatPage() {
       })
     },
     onMutate: async (data) => {
-      // Cancel outgoing refetches
       await queryClient.cancelQueries({ queryKey: ["/api/support/messages", { userId: selectedUserId }] })
-
-      // Snapshot previous value
       const previousMessages = queryClient.getQueryData<SupportMessage[]>(["/api/support/messages", { userId: selectedUserId }])
 
-      // Optimistically update with temp message
       if (previousMessages && user?.id) {
         const tempMessage: SupportMessage = {
           id: `temp-${Date.now()}`,
@@ -129,22 +147,18 @@ export default function AdminSupportChatPage() {
     },
     onSuccess: (data) => {
       setMessage("")
-      // Update with real message from server
       queryClient.setQueryData<SupportMessage[]>(
         ["/api/support/messages", { userId: selectedUserId }],
         (old) => {
           if (!old) return [data]
-          // Remove temp messages and check for duplicates
           const withoutTemp = old.filter(m => !m.id.startsWith('temp-'))
           if (withoutTemp.some(m => m.id === data.id)) return withoutTemp
           return [...withoutTemp, data]
         }
       )
-      // Update conversations list
       queryClient.invalidateQueries({ queryKey: ["/api/support/conversations"] })
     },
     onError: (_error, _variables, context) => {
-      // Rollback on error
       if (context?.previousMessages) {
         queryClient.setQueryData(["/api/support/messages", { userId: selectedUserId }], context.previousMessages)
       }
@@ -156,24 +170,67 @@ export default function AdminSupportChatPage() {
     },
   })
 
-  // Connect to WebSocket
+  const archiveMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const response = await fetch(`/api/support/conversations/${userId}/archive`, {
+        method: 'PUT',
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Failed to archive');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/support/conversations"] });
+      setSelectedUserId(null);
+      toast({ title: "Успешно", description: "Обращение архивировано" });
+    },
+  })
+
+  const closeMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const response = await fetch(`/api/support/conversations/${userId}/close`, {
+        method: 'PUT',
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Failed to close');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/support/conversations"] });
+      setSelectedUserId(null);
+      toast({ title: "Успешно", description: "Обращение закрыто" });
+    },
+  })
+
+  const reopenMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const response = await fetch(`/api/support/conversations/${userId}/reopen`, {
+        method: 'PUT',
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Failed to reopen');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/support/conversations"] });
+      toast({ title: "Успешно", description: "Обращение переоткрыто" });
+    },
+  })
+
   useEffect(() => {
     if (user?.id) {
       wsClient.connect(user.id)
 
       const unsubscribe = wsClient.onMessage((msg) => {
         if (msg.type === "new_message" && msg.message) {
-          // Directly add the message to the cache for the relevant conversation
           queryClient.setQueryData<SupportMessage[]>(
             ["/api/support/messages", { userId: msg.message.userId }],
             (old) => {
               if (!old) return [msg.message]
-              // Avoid duplicates
               if (old.some(m => m.id === msg.message.id)) return old
               return [...old, msg.message]
             }
           )
-          // Update conversations list
           queryClient.invalidateQueries({ queryKey: ["/api/support/conversations"] })
         }
       })
@@ -184,7 +241,6 @@ export default function AdminSupportChatPage() {
     }
   }, [user?.id, queryClient])
 
-  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (scrollAreaRef.current) {
       const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]')
@@ -228,73 +284,121 @@ export default function AdminSupportChatPage() {
     }
   }
 
+  const selectedConversation = displayConversations.find(c => c.userId === selectedUserId)
+
   return (
     <AdminLayout>
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2">Чат поддержки</h1>
-        <p className="text-muted-foreground">
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold mb-1">Чат поддержки</h1>
+        <p className="text-sm text-muted-foreground">
           Управление диалогами с клиентами
         </p>
       </div>
 
-      <div className="grid grid-cols-12 gap-6 min-h-[calc(100vh-160px)]">
-        {/* Conversations List - Left Sidebar */}
+      <div className="grid grid-cols-12 gap-4 min-h-[calc(100vh-160px)]">
         <Card className="col-span-3 flex flex-col">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Диалоги</CardTitle>
-            <div className="flex gap-2 mt-3">
+          <CardHeader className="pb-2 px-3 pt-3">
+            <CardTitle className="text-base mb-2">Диалоги</CardTitle>
+            <div className="flex gap-1">
               <Button
-                variant={statusFilter === 'active' ? 'default' : 'outline'}
+                variant={statusFilter === 'open' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setStatusFilter('active')}
-                className="flex-1"
+                onClick={() => setStatusFilter('open')}
+                className="flex-1 h-7 text-xs"
               >
-                Активные
+                <FolderOpen className="h-3 w-3 mr-1" />
+                Открытые
               </Button>
               <Button
                 variant={statusFilter === 'archived' ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setStatusFilter('archived')}
-                className="flex-1"
+                className="flex-1 h-7 text-xs"
               >
+                <Archive className="h-3 w-3 mr-1" />
                 Архив
               </Button>
+              <Button
+                variant={statusFilter === 'closed' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setStatusFilter('closed')}
+                className="flex-1 h-7 text-xs"
+              >
+                <FolderClosed className="h-3 w-3 mr-1" />
+                Закрытые
+              </Button>
             </div>
+            
+            {statusFilter === 'closed' && (
+              <div className="mt-2 space-y-1.5 pt-2 border-t">
+                <Input
+                  placeholder="Email..."
+                  value={searchEmail}
+                  onChange={(e) => setSearchEmail(e.target.value)}
+                  className="h-7 text-xs"
+                />
+                <div className="grid grid-cols-2 gap-1">
+                  <Input
+                    type="date"
+                    placeholder="От"
+                    value={searchDateFrom}
+                    onChange={(e) => setSearchDateFrom(e.target.value)}
+                    className="h-7 text-xs"
+                  />
+                  <Input
+                    type="date"
+                    placeholder="До"
+                    value={searchDateTo}
+                    onChange={(e) => setSearchDateTo(e.target.value)}
+                    className="h-7 text-xs"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => refetchClosedSearch()}
+                  className="w-full h-7 text-xs"
+                  variant="secondary"
+                >
+                  <Search className="h-3 w-3 mr-1" />
+                  Поиск
+                </Button>
+              </div>
+            )}
           </CardHeader>
           <CardContent className="p-0 flex-1 overflow-hidden">
             <ScrollArea className="h-full">
-              {conversations.length === 0 ? (
-                <div className="p-6 text-center text-muted-foreground">
-                  <MessageCircle className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">Нет активных диалогов</p>
+              {displayConversations.length === 0 ? (
+                <div className="p-4 text-center text-muted-foreground">
+                  <MessageCircle className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                  <p className="text-xs">
+                    {statusFilter === 'closed' && !searchEmail && !searchDateFrom && !searchDateTo
+                      ? 'Используйте поиск для просмотра закрытых чатов'
+                      : 'Нет диалогов'
+                    }
+                  </p>
                 </div>
               ) : (
                 <div className="divide-y">
-                  {conversations.map((conv) => (
+                  {displayConversations.map((conv) => (
                     <button
                       key={conv.userId}
                       onClick={() => setSelectedUserId(conv.userId)}
-                      className={`w-full text-left p-4 hover:bg-accent transition-colors ${
+                      className={`w-full text-left p-2.5 hover:bg-accent transition-colors ${
                         selectedUserId === conv.userId ? "bg-accent" : ""
                       }`}
                     >
-                      <div className="flex items-start justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <User className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium text-sm">
-                            Клиент #{conv.userId.slice(0, 8)}
+                      <div className="flex items-start justify-between mb-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <User className="h-3 w-3 text-muted-foreground" />
+                          <span className="font-medium text-xs">
+                            #{conv.userId.slice(0, 8)}
                           </span>
                         </div>
-                        {conv.unreadCount > 0 && (
-                          <Badge variant="destructive" className="h-5 min-w-5 px-1 text-xs">
-                            {conv.unreadCount}
-                          </Badge>
-                        )}
                       </div>
-                      <p className="text-sm text-muted-foreground line-clamp-2 mb-1">
+                      <p className="text-xs text-muted-foreground line-clamp-2 mb-0.5">
                         {conv.lastMessage.messageText}
                       </p>
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-[10px] text-muted-foreground">
                         {format(new Date(conv.lastMessage.createdAt), "dd MMM, HH:mm", {
                           locale: ru,
                         })}
@@ -307,33 +411,64 @@ export default function AdminSupportChatPage() {
           </CardContent>
         </Card>
 
-        {/* Active Chat - Center */}
         <Card className="col-span-6 flex flex-col">
-          <CardHeader className="border-b pb-3">
+          <CardHeader className="border-b pb-2 px-3 pt-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <MessageCircle className="h-5 w-5" />
-                {selectedUserId ? `Диалог с клиентом` : "Выберите диалог"}
+              <CardTitle className="text-base flex items-center gap-2">
+                <MessageCircle className="h-4 w-4" />
+                {selectedUserId ? `Диалог` : "Выберите диалог"}
               </CardTitle>
-              {selectedUserId && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    try {
-                      await fetch(`/api/support/conversations/${selectedUserId}/archive`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                      });
-                      queryClient.invalidateQueries({ queryKey: ["/api/support/conversations"] });
-                      setSelectedUserId(null);
-                    } catch {
-                      toast({ title: "Ошибка", description: "Не удалось закрыть обращение", variant: "destructive" });
-                    }
-                  }}
-                >
-                  Закрыть обращение
-                </Button>
+              {selectedUserId && selectedConversation && (
+                <div className="flex gap-1">
+                  {selectedConversation.status === 'open' && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => archiveMutation.mutate(selectedUserId)}
+                        disabled={archiveMutation.isPending}
+                        className="h-7 text-xs"
+                      >
+                        <Archive className="h-3 w-3 mr-1" />
+                        Архивировать
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => closeMutation.mutate(selectedUserId)}
+                        disabled={closeMutation.isPending}
+                        className="h-7 text-xs"
+                      >
+                        <FolderClosed className="h-3 w-3 mr-1" />
+                        Закрыть
+                      </Button>
+                    </>
+                  )}
+                  {selectedConversation.status === 'archived' && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => reopenMutation.mutate(selectedUserId)}
+                        disabled={reopenMutation.isPending}
+                        className="h-7 text-xs"
+                      >
+                        <FolderOpen className="h-3 w-3 mr-1" />
+                        Переоткрыть
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => closeMutation.mutate(selectedUserId)}
+                        disabled={closeMutation.isPending}
+                        className="h-7 text-xs"
+                      >
+                        <FolderClosed className="h-3 w-3 mr-1" />
+                        Закрыть
+                      </Button>
+                    </>
+                  )}
+                </div>
               )}
             </div>
           </CardHeader>
@@ -341,44 +476,43 @@ export default function AdminSupportChatPage() {
             {!selectedUserId ? (
               <div className="flex-1 flex items-center justify-center text-muted-foreground">
                 <div className="text-center">
-                  <MessageCircle className="h-16 w-16 mx-auto mb-4 opacity-50" />
-                  <p>Выберите диалог из списка слева</p>
+                  <MessageCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                  <p className="text-sm">Выберите диалог из списка слева</p>
                 </div>
               </div>
             ) : (
               <>
-                {/* Messages */}
-                <ScrollArea ref={scrollAreaRef} className="flex-1 p-4">
+                <ScrollArea ref={scrollAreaRef} className="flex-1 p-3">
                   {messagesLoading ? (
                     <div className="flex items-center justify-center h-full">
                       <div className="text-center">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                        <p className="mt-2 text-sm text-muted-foreground">Загрузка...</p>
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto"></div>
+                        <p className="mt-2 text-xs text-muted-foreground">Загрузка...</p>
                       </div>
                     </div>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       {messages.map((msg) => {
                         const isCustomerMessage = msg.senderId === selectedUserId
                         return (
                           <div
                             key={msg.id}
-                            className={`flex flex-col gap-1 ${
+                            className={`flex flex-col gap-0.5 ${
                               isCustomerMessage ? "items-start" : "items-end"
                             }`}
                           >
                             <div
-                              className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
+                              className={`max-w-[75%] rounded-xl px-3 py-1.5 shadow-sm ${
                                 isCustomerMessage
                                   ? "bg-muted/70 rounded-tl-sm"
                                   : "bg-primary text-primary-foreground rounded-tr-sm"
                               }`}
                             >
-                              <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                              <p className="text-xs leading-relaxed whitespace-pre-wrap break-words">
                                 {msg.messageText}
                               </p>
                             </div>
-                            <span className="text-xs text-muted-foreground px-1">
+                            <span className="text-[10px] text-muted-foreground px-1">
                               {format(new Date(msg.createdAt), "HH:mm", { locale: ru })}
                             </span>
                           </div>
@@ -388,59 +522,66 @@ export default function AdminSupportChatPage() {
                   )}
                 </ScrollArea>
 
-                {/* Input */}
-                <div className="p-4 border-t bg-muted/20">
-                  <div className="flex gap-3 items-end">
-                    <Textarea
-                      placeholder="Введите ответ..."
-                      value={message}
-                      onChange={(e) => setMessage(e.target.value)}
-                      onKeyDown={handleKeyPress}
-                      rows={1}
-                      className="resize-none flex-1 bg-background min-h-[2.5rem]"
-                    />
-                    <Button
-                      onClick={handleSendMessage}
-                      disabled={!message.trim() || sendMessageMutation.isPending}
-                      size="icon"
-                      className="h-10 w-10 shrink-0"
-                    >
-                      <Send className="h-4 w-4" />
-                    </Button>
+                {selectedConversation?.status !== 'closed' && (
+                  <div className="p-3 border-t bg-muted/20">
+                    <div className="flex gap-2 items-end">
+                      <Textarea
+                        placeholder="Введите ответ..."
+                        value={message}
+                        onChange={(e) => setMessage(e.target.value)}
+                        onKeyDown={handleKeyPress}
+                        rows={1}
+                        className="resize-none flex-1 bg-background min-h-[2rem] text-xs"
+                      />
+                      <Button
+                        onClick={handleSendMessage}
+                        disabled={!message.trim() || sendMessageMutation.isPending}
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                      >
+                        <Send className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1.5 px-0.5">
+                      Enter — отправить, Shift+Enter — новая строка
+                    </p>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-2 px-1">
-                    Enter — отправить, Shift+Enter — новая строка
-                  </p>
-                </div>
+                )}
+                
+                {selectedConversation?.status === 'closed' && (
+                  <div className="p-3 border-t bg-muted/40 text-center">
+                    <p className="text-xs text-muted-foreground">
+                      Чат закрыт. Сообщения сохранены в соответствии с 152-ФЗ.
+                    </p>
+                  </div>
+                )}
               </>
             )}
           </CardContent>
         </Card>
 
-        {/* Customer Info - Right Sidebar */}
         <Card className="col-span-3 flex flex-col">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Информация о клиенте</CardTitle>
+          <CardHeader className="pb-2 px-3 pt-3">
+            <CardTitle className="text-base">Информация о клиенте</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-3">
             {!selectedUserId ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                Выберите диалог для просмотра информации
+              <p className="text-xs text-muted-foreground text-center py-6">
+                Выберите диалог
               </p>
             ) : !customerInfo ? (
-              <div className="text-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                <p className="mt-2 text-sm text-muted-foreground">Загрузка...</p>
+              <div className="text-center py-6">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto"></div>
+                <p className="mt-2 text-xs text-muted-foreground">Загрузка...</p>
               </div>
             ) : (
-              <div className="space-y-4">
-                {/* Personal Info */}
+              <div className="space-y-3">
                 <div>
-                  <h3 className="font-semibold mb-2 flex items-center gap-2">
-                    <User className="h-4 w-4" />
+                  <h3 className="font-semibold text-xs mb-1.5 flex items-center gap-1.5">
+                    <User className="h-3 w-3" />
                     Личные данные
                   </h3>
-                  <div className="space-y-2 text-sm">
+                  <div className="space-y-1 text-xs">
                     <div>
                       <span className="text-muted-foreground">Имя:</span>
                       <p className="font-medium">
@@ -451,7 +592,7 @@ export default function AdminSupportChatPage() {
                     </div>
                     <div>
                       <span className="text-muted-foreground">Email:</span>
-                      <p className="font-medium">{customerInfo.email}</p>
+                      <p className="font-medium break-all">{customerInfo.email}</p>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Телефон:</span>
@@ -466,31 +607,30 @@ export default function AdminSupportChatPage() {
 
                 <Separator />
 
-                {/* Orders */}
                 <div>
-                  <h3 className="font-semibold mb-2 flex items-center gap-2">
-                    <ShoppingBag className="h-4 w-4" />
+                  <h3 className="font-semibold text-xs mb-1.5 flex items-center gap-1.5">
+                    <ShoppingBag className="h-3 w-3" />
                     История заказов
                   </h3>
-                  <ScrollArea className="h-[300px]">
+                  <ScrollArea className="h-[280px]">
                     {customerInfo.orders.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-4">
+                      <p className="text-xs text-muted-foreground text-center py-3">
                         Нет заказов
                       </p>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         {customerInfo.orders.map((order) => (
                           <div
                             key={order.id}
-                            className="p-3 border rounded-lg text-sm space-y-1"
+                            className="p-2 border rounded-md text-xs space-y-0.5"
                           >
                             <div className="flex items-center justify-between">
                               <span className="font-medium">№{order.orderNumber}</span>
-                              <Badge className={`text-xs ${getStatusBadgeColor(order.status)}`}>
+                              <Badge className={`text-[10px] h-4 ${getStatusBadgeColor(order.status)}`}>
                                 {getStatusText(order.status)}
                               </Badge>
                             </div>
-                            <p className="text-muted-foreground">
+                            <p className="text-muted-foreground text-[10px]">
                               {format(new Date(order.createdAt), "dd MMM yyyy", {
                                 locale: ru,
                               })}
