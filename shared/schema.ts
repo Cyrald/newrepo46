@@ -256,14 +256,17 @@ export const comparisonItems = pgTable("comparison_items", {
 
 export const supportConversations = pgTable("support_conversations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
-  status: text("status").notNull().default("active"), // 'active' | 'archived'
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("open"), // 'open' | 'archived' | 'closed'
   archivedAt: timestamp("archived_at"),
+  closedAt: timestamp("closed_at"),
+  lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
   userIdIdx: index("support_conversations_user_id_idx").on(table.userId),
   statusIdx: index("support_conversations_status_idx").on(table.status),
+  statusArchivedIdx: index("support_conversations_status_archived_idx").on(table.status, table.archivedAt),
 }));
 
 export const supportMessages = pgTable("support_messages", {
