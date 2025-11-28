@@ -559,7 +559,11 @@ export type InsertSupportMessageAttachment = z.infer<typeof insertSupportMessage
 // Регистрация
 export const registerSchema = z.object({
   email: z.string().email("Неверный формат email").max(255, "Email слишком длинный"),
-  password: z.string().min(8, "Пароль должен быть не менее 8 символов").max(100, "Пароль слишком длинный"),
+  password: z.string()
+    .min(8, "Пароль должен быть не менее 8 символов")
+    .max(100, "Пароль слишком длинный")
+    .regex(/[a-z]/, "Пароль должен содержать строчную букву")
+    .regex(/[A-Z]/, "Пароль должен содержать заглавную букву"),
   confirmPassword: z.string(),
   firstName: z.string().min(1, "Имя обязательно").max(100, "Имя слишком длинное"),
   lastName: z.string().max(100, "Фамилия слишком длинная").optional(),
