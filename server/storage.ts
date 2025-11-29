@@ -46,7 +46,7 @@ import {
   supportMessages,
   supportMessageAttachments,
 } from "@shared/schema";
-import { eq, and, desc, sql, like, gte, lte, or, inArray } from "drizzle-orm";
+import { eq, and, desc, sql, like, gte, lte, or, inArray, isNull, isNotNull } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -55,6 +55,7 @@ export interface IStorage {
   getUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, data: Partial<User>): Promise<User | undefined>;
+  deleteUserAccount(userId: string): Promise<void>;
   
   getUserRoles(userId: string): Promise<UserRole[]>;
   addUserRole(role: InsertUserRole): Promise<UserRole>;
@@ -421,7 +422,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<UserAddress | undefined> {
     const [address] = await db
       .update(userAddresses)
-      .set({ ...data, updatedAt: new Date() })
+      .set(data)
       .where(eq(userAddresses.id, id))
       .returning();
     return address;
@@ -434,12 +435,12 @@ export class DatabaseStorage implements IStorage {
   async setDefaultAddress(userId: string, addressId: string): Promise<void> {
     await db
       .update(userAddresses)
-      .set({ isDefault: false, updatedAt: new Date() })
+      .set({ isDefault: false })
       .where(and(eq(userAddresses.userId, userId), eq(userAddresses.isDefault, true)));
 
     await db
       .update(userAddresses)
-      .set({ isDefault: true, updatedAt: new Date() })
+      .set({ isDefault: true })
       .where(eq(userAddresses.id, addressId));
   }
 
@@ -625,12 +626,12 @@ export class DatabaseStorage implements IStorage {
   async getAllSupportConversations(status?: 'open' | 'archived' | 'closed'): Promise<any[]> {
     const conditions = [];
     if (status === 'archived') {
-      conditions.push(eq(supportConversations.archivedAt, sql`NOT NULL`));
+      conditions.push(isNotNull(supportConversations.archivedAt));
     } else if (status === 'closed') {
-      conditions.push(eq(supportConversations.closedAt, sql`NOT NULL`));
+      conditions.push(isNotNull(supportConversations.closedAt));
     } else if (status === 'open') {
-      conditions.push(eq(supportConversations.closedAt, null));
-      conditions.push(eq(supportConversations.archivedAt, null));
+      conditions.push(isNull(supportConversations.closedAt));
+      conditions.push(isNull(supportConversations.archivedAt));
     }
 
     const convs = await db
@@ -667,7 +668,7 @@ export class DatabaseStorage implements IStorage {
   async markMessageAsRead(id: string): Promise<void> {
     await db
       .update(supportMessages)
-      .set({ isRead: true, updatedAt: new Date() })
+      .set({ isRead: true })
       .where(eq(supportMessages.id, id));
   }
 
@@ -770,7 +771,7 @@ export class DatabaseStorage implements IStorage {
     dateFrom?: Date;
     dateTo?: Date;
   }): Promise<any[]> {
-    const conditions = [eq(supportConversations.closedAt, sql`NOT NULL`)];
+    const conditions = [isNotNull(supportConversations.closedAt)];
 
     if (filters.email) {
       const [user] = await db
@@ -815,12 +816,35 @@ export class DatabaseStorage implements IStorage {
     );
   }
 
-  async deleteOldMessages(olderThanDays: number): Promise<number> {
-    const cutoffDate = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+  async deleteOldMessages(olderThanMonths: number): Promise<number> {
+    const cutoffDate = new Date();
+    cutoffDate.setMonth(cutoffDate.getMonth() - olderThanMonths);
+    
     const result = await db
       .delete(supportMessages)
       .where(lte(supportMessages.createdAt, cutoffDate))
       .returning();
+    return result.length;
+  }
+
+  async deleteUserAccount(userId: string): Promise<void> {
+    await db.delete(users).where(eq(users.id, userId));
+  }
+
+  async anonymizeOldOrders(olderThanMonths: number): Promise<number> {
+    const cutoffDate = new Date();
+    cutoffDate.setMonth(cutoffDate.getMonth() - olderThanMonths);
+
+    const result = await db
+      .update(orders)
+      .set({
+        userId: null,
+        deliveryAddress: null,
+        updatedAt: new Date(),
+      })
+      .where(lte(orders.createdAt, cutoffDate))
+      .returning();
+    
     return result.length;
   }
 }

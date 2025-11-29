@@ -13,6 +13,7 @@ import { generalApiLimiter } from "./middleware/rateLimiter";
 import { csrfMiddleware, csrfTokenEndpoint } from "./middleware/csrf";
 import { logger } from "./utils/logger";
 import { pool } from "./db";
+import { startDataRetentionScheduler } from "./scheduler";
 
 const app = express();
 
@@ -125,6 +126,8 @@ app.use(express.urlencoded({
       nodeVersion: process.version 
     });
     log(`serving on port ${port}`);
+
+    startDataRetentionScheduler();
   });
 
   let isShuttingDown = false;

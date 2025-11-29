@@ -2,8 +2,8 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { db } from "../db";
 import { authenticateToken, requireRole } from "../auth";
-import { sql } from "drizzle-orm";
-import { userRoles } from "@shared/schema";
+import { sql, count, sum, eq } from "drizzle-orm";
+import { users, products, orders, userRoles } from "@shared/schema";
 
 const router = Router();
 
@@ -15,24 +15,26 @@ router.get("/stats", authenticateToken, requireRole("admin"), async (req, res) =
     totalRevenueResult,
     pendingOrdersResult,
   ] = await Promise.all([
-    db.execute(sql`SELECT COUNT(*)::int as count FROM users`),
-    db.execute(sql`SELECT COUNT(*)::int as count FROM products WHERE is_archived = false`),
-    db.execute(sql`SELECT COUNT(*)::int as count FROM orders`),
-    db.execute(sql`SELECT COALESCE(SUM(CAST(total AS DECIMAL)), 0) as total FROM orders WHERE payment_status = 'paid'`),
-    db.execute(sql`SELECT COUNT(*)::int as count FROM orders WHERE status = 'pending'`),
+    db.select({ count: count() }).from(users),
+    db.select({ count: count() }).from(products).where(eq(products.isArchived, false)),
+    db.select({ count: count() }).from(orders),
+    db.select({ 
+      total: sql<string>`COALESCE(SUM(CAST(${orders.total} AS DECIMAL)), 0)` 
+    }).from(orders).where(eq(orders.paymentStatus, 'paid')),
+    db.select({ count: count() }).from(orders).where(eq(orders.status, 'pending')),
   ]);
 
-  const totalUsers = totalUsersResult.rows?.[0]?.count || 0;
-  const totalProducts = totalProductsResult.rows?.[0]?.count || 0;
-  const totalOrders = totalOrdersResult.rows?.[0]?.count || 0;
-  const totalRevenue = totalRevenueResult.rows?.[0]?.total || 0;
-  const pendingOrders = pendingOrdersResult.rows?.[0]?.count || 0;
+  const totalUsers = totalUsersResult[0]?.count || 0;
+  const totalProducts = totalProductsResult[0]?.count || 0;
+  const totalOrders = totalOrdersResult[0]?.count || 0;
+  const totalRevenue = totalRevenueResult[0]?.total || '0';
+  const pendingOrders = pendingOrdersResult[0]?.count || 0;
 
   res.json({
     totalUsers,
     totalProducts,
     totalOrders,
-    totalRevenue: parseFloat(totalRevenue as string),
+    totalRevenue: parseFloat(totalRevenue),
     pendingOrders,
   });
 });

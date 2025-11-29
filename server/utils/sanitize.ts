@@ -57,6 +57,32 @@ export function sanitizePhoneNumber(phone: string): string {
   return '+' + cleaned;
 }
 
+export function validatePassword(password: string): void {
+  if (!password || typeof password !== 'string') {
+    throw new ValidationError('Пароль обязателен');
+  }
+  
+  if (password.length < 12) {
+    throw new ValidationError('Пароль должен быть не менее 12 символов');
+  }
+  
+  if (password.length > 100) {
+    throw new ValidationError('Пароль не должен превышать 100 символов');
+  }
+  
+  if (!/[A-Z]/.test(password)) {
+    throw new ValidationError('Пароль должен содержать хотя бы одну заглавную букву');
+  }
+  
+  if (!/[a-z]/.test(password)) {
+    throw new ValidationError('Пароль должен содержать хотя бы одну строчную букву');
+  }
+  
+  if (!/[0-9]/.test(password)) {
+    throw new ValidationError('Пароль должен содержать хотя бы одну цифру');
+  }
+}
+
 export function sanitizePostalCode(code: string): string {
   const russianPostalRegex = /^\d{6}$/;
   if (!russianPostalRegex.test(code)) {

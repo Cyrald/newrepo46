@@ -221,6 +221,22 @@ export const orders = pgTable("orders", {
 }));
 
 // ============================================
+// IDEMPOTENCY KEYS
+// ============================================
+
+export const idempotencyKeys = pgTable("idempotency_keys", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  key: text("key").notNull().unique(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  response: jsonb("response").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+}, (table) => ({
+  keyIdx: index("idempotency_keys_key_idx").on(table.key),
+  expiresAtIdx: index("idempotency_keys_expires_at_idx").on(table.expiresAt),
+}));
+
+// ============================================
 // CART, WISHLIST, COMPARISON
 // ============================================
 
@@ -386,7 +402,10 @@ export const supportMessagesRelations = relations(supportMessages, ({ one, many 
 
 export const insertUserSchema = createInsertSchema(users, {
   email: z.string().email("Неверный формат email"),
-  passwordHash: z.string().min(8, "Пароль должен быть не менее 8 символов"),
+  passwordHash: z.string().min(12, "Пароль должен быть не менее 12 символов")
+    .regex(/[A-Z]/, "Пароль должен содержать хотя бы одну заглавную букву")
+    .regex(/[a-z]/, "Пароль должен содержать хотя бы одну строчную букву")
+    .regex(/[0-9]/, "Пароль должен содержать хотя бы одну цифру"),
   firstName: z.string().min(1, "Имя обязательно"),
   phone: z.string().min(10, "Неверный формат телефона"),
 }).omit({
@@ -627,7 +646,9 @@ export const registerSchema = z.object({
     .min(8, "Пароль должен быть не менее 8 символов")
     .max(100, "Пароль слишком длинный")
     .regex(/[a-z]/, "Пароль должен содержать строчную букву")
-    .regex(/[A-Z]/, "Пароль должен содержать заглавную букву"),
+    .regex(/[A-Z]/, "Пароль должен содержать заглавную букву")
+    .regex(/\d/, "Пароль должен содержать цифру")
+    .regex(/[@$!%*?&#]/, "Пароль должен содержать спецсимвол (@$!%*?&#)"),
   confirmPassword: z.string(),
   firstName: z.string().min(1, "Имя обязательно").max(100, "Имя слишком длинное"),
   lastName: z.string().max(100, "Фамилия слишком длинная").optional(),

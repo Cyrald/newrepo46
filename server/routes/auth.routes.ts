@@ -8,6 +8,7 @@ import { authLimiter, registerLimiter, passwordChangeLimiter } from "../middlewa
 import { logLoginAttempt, logRegistration } from "../utils/securityLogger";
 import { logger } from "../utils/logger";
 import { invalidateAllUserSessions } from "../utils/sessionManager";
+import { validatePassword } from "../utils/sanitize";
 
 const router = Router();
 
@@ -21,6 +22,7 @@ router.post("/register", registerLimiter, async (req, res) => {
     return res.status(400).json({ message: "Email уже зарегистрирован" });
   }
 
+  validatePassword(data.password);
   const passwordHash = await hashPassword(data.password);
   const verificationToken = generateVerificationToken();
   const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -174,6 +176,30 @@ router.get("/verify-email", async (req, res) => {
   res.json({ message: "Email успешно подтверждён" });
 });
 
+router.post("/resend-verification", authenticateToken, authLimiter, async (req, res) => {
+  const user = await storage.getUser(req.userId!);
+
+  if (!user) {
+    return res.status(404).json({ message: "Пользователь не найден" });
+  }
+
+  if (user.isVerified) {
+    return res.status(400).json({ message: "Email уже подтверждён" });
+  }
+
+  const verificationToken = generateVerificationToken();
+  const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+  await storage.updateUser(user.id, {
+    verificationToken,
+    verificationTokenExpires,
+  });
+
+  await sendVerificationEmail(user.email, verificationToken, user.firstName);
+
+  res.json({ message: "Письмо для подтверждения отправлено повторно" });
+});
+
 router.get("/me", authenticateToken, async (req, res) => {
   const user = await storage.getUser(req.userId!);
   
@@ -251,6 +277,7 @@ router.put("/password", authenticateToken, passwordChangeLimiter, async (req, re
       return res.status(401).json({ message: "Неверный текущий пароль" });
     }
 
+    validatePassword(data.newPassword);
     const newPasswordHash = await hashPassword(data.newPassword);
 
     await storage.updateUser(req.userId!, {
@@ -276,6 +303,59 @@ router.put("/password", authenticateToken, passwordChangeLimiter, async (req, re
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: error.errors[0].message });
     }
+    throw error;
+  }
+});
+
+router.delete("/account", authenticateToken, passwordChangeLimiter, async (req, res) => {
+  try {
+    const { password } = req.body;
+
+    if (!password || typeof password !== 'string') {
+      return res.status(400).json({ message: "Пароль обязателен для удаления аккаунта" });
+    }
+
+    const user = await storage.getUser(req.userId!);
+    
+    if (!user) {
+      return res.status(404).json({ message: "Пользователь не найден" });
+    }
+
+    const isPasswordValid = await comparePassword(password, user.passwordHash);
+
+    if (!isPasswordValid) {
+      return res.status(401).json({ message: "Неверный пароль" });
+    }
+
+    await storage.deleteUserAccount(req.userId!);
+
+    await invalidateAllUserSessions(req.userId!);
+
+    req.session.destroy((err) => {
+      if (err) {
+        logger.error('Failed to destroy session after account deletion', { 
+          userId: req.userId, 
+          error: err.message 
+        });
+      }
+    });
+
+    res.clearCookie('sessionId');
+    
+    logger.info('User account deleted', { 
+      userId: req.userId,
+      email: user.email,
+      ip: req.ip,
+    });
+
+    res.json({ 
+      message: "Аккаунт успешно удалён" 
+    });
+  } catch (error) {
+    logger.error('Account deletion failed', { 
+      userId: req.userId, 
+      error 
+    });
     throw error;
   }
 });

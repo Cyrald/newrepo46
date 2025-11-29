@@ -2,10 +2,11 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { db } from "../db";
 import { authenticateToken, requireRole } from "../auth";
-import { createOrderSchema, orders, promocodes, promocodeUsage, cartItems } from "@shared/schema";
+import { createOrderSchema, orders, promocodes, promocodeUsage, cartItems, products, users } from "@shared/schema";
 import { validatePromocode } from "../promocodes";
 import { calculateCashback, canUseBonuses } from "../bonuses";
 import { orderLimiter } from "../middleware/rateLimiter";
+import { handleIdempotency } from "../middleware/idempotency";
 import { sql, eq, and } from "drizzle-orm";
 import { BUSINESS_CONFIG } from "../config/business";
 import { z } from "zod";
@@ -46,7 +47,7 @@ export function createOrdersRoutes(connectedUsers: Map<string, ConnectedUser>) {
     res.json(order);
   });
 
-  router.post("/", authenticateToken, orderLimiter, async (req, res) => {
+  router.post("/", authenticateToken, handleIdempotency, orderLimiter, async (req, res) => {
     try {
       const data = createOrderSchema.parse(req.body);
       const user = await storage.getUser(req.userId!);
@@ -146,40 +147,49 @@ export function createOrdersRoutes(connectedUsers: Map<string, ConnectedUser>) {
         );
 
         for (const item of data.items) {
-          const updateResult = await tx.execute(
-            sql`UPDATE products 
-                SET stock_quantity = stock_quantity - ${item.quantity},
-                    updated_at = NOW()
-                WHERE id = ${item.productId}
-                  AND stock_quantity >= ${item.quantity}
-                RETURNING id, name, stock_quantity`
-          );
+          const [product] = await tx
+            .select()
+            .from(products)
+            .where(eq(products.id, item.productId))
+            .for('update')
+            .limit(1);
           
-          if (!updateResult.rows || updateResult.rows.length === 0) {
-            const checkProduct = await tx.execute(
-              sql`SELECT id, name, stock_quantity FROM products WHERE id = ${item.productId}`
-            );
-            if (!checkProduct.rows || checkProduct.rows.length === 0) {
-              throw new Error(`PRODUCT_NOT_FOUND:${item.productId}`);
-            }
-            const product = checkProduct.rows[0] as any;
-            throw new Error(`INSUFFICIENT_STOCK:${product.name}:${product.stock_quantity}:${item.quantity}`);
+          if (!product) {
+            throw new Error(`PRODUCT_NOT_FOUND:${item.productId}`);
           }
+          
+          if (product.stockQuantity < item.quantity) {
+            throw new Error(`INSUFFICIENT_STOCK:${product.name}:${product.stockQuantity}:${item.quantity}`);
+          }
+          
+          await tx
+            .update(products)
+            .set({ 
+              stockQuantity: sql`${products.stockQuantity} - ${item.quantity}`,
+              updatedAt: new Date()
+            })
+            .where(eq(products.id, item.productId));
         }
 
         if (bonusesUsed > 0) {
-          const bonusResult = await tx.execute(
-            sql`UPDATE users 
-                SET bonus_balance = bonus_balance - ${bonusesUsed},
-                    updated_at = NOW()
-                WHERE id = ${req.userId}
-                  AND bonus_balance >= ${bonusesUsed}
-                RETURNING id`
-          );
+          const [userCheck] = await tx
+            .select()
+            .from(users)
+            .where(eq(users.id, req.userId!))
+            .for('update')
+            .limit(1);
           
-          if (!bonusResult.rows || bonusResult.rows.length === 0) {
+          if (!userCheck || userCheck.bonusBalance < bonusesUsed) {
             throw new Error('INSUFFICIENT_BONUS');
           }
+          
+          await tx
+            .update(users)
+            .set({ 
+              bonusBalance: sql`${users.bonusBalance} - ${bonusesUsed}`,
+              updatedAt: new Date()
+            })
+            .where(eq(users.id, req.userId!));
         }
 
         if (promocodeId) {
@@ -193,12 +203,18 @@ export function createOrdersRoutes(connectedUsers: Map<string, ConnectedUser>) {
             if (promocode.type === "single_use") {
               await tx.delete(promocodes).where(eq(promocodes.id, promocodeId));
             } else if (promocode.type === "temporary") {
-              const existingUsage = await tx.execute(
-                sql`SELECT id FROM promocode_usage 
-                    WHERE promocode_id = ${promocodeId} AND user_id = ${req.userId}
-                    LIMIT 1`
-              );
-              if (existingUsage.rows && existingUsage.rows.length > 0) {
+              const [existingUsage] = await tx
+                .select()
+                .from(promocodeUsage)
+                .where(
+                  and(
+                    eq(promocodeUsage.promocodeId, promocodeId),
+                    eq(promocodeUsage.userId, req.userId!)
+                  )
+                )
+                .limit(1);
+              
+              if (existingUsage) {
                 throw new Error('PROMOCODE_ALREADY_USED');
               }
             }

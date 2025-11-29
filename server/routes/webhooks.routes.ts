@@ -2,13 +2,60 @@ import { Router } from 'express';
 import { storage } from '../storage';
 import { db } from '../db';
 import { logger } from '../utils/logger';
-import { sql, eq } from 'drizzle-orm';
+import { sql, eq, and } from 'drizzle-orm';
 import { orders, promocodeUsage, promocodes } from '@shared/schema';
+import { env } from '../env';
+import crypto from 'crypto';
 
 const router = Router();
 
+function verifyYooKassaSignature(body: Buffer | string, signature: string, secretKey: string): boolean {
+  try {
+    if (!/^[0-9a-fA-F]+$/.test(signature)) {
+      logger.warn('Invalid signature format - not hex');
+      return false;
+    }
+
+    const hmac = crypto
+      .createHmac('sha256', secretKey)
+      .update(body)
+      .digest('hex');
+    
+    return crypto.timingSafeEqual(
+      Buffer.from(signature, 'hex'),
+      Buffer.from(hmac, 'hex')
+    );
+  } catch (error) {
+    logger.error('YooKassa signature verification failed', { error });
+    return false;
+  }
+}
+
 router.post('/yookassa', async (req, res) => {
   try {
+    if (!env.YUKASSA_SECRET_KEY) {
+      logger.error('YUKASSA_SECRET_KEY not configured');
+      return res.status(500).json({ message: 'Server configuration error' });
+    }
+
+    const signature = req.headers['x-yookassa-signature'] as string;
+    
+    if (!signature) {
+      logger.warn('YooKassa webhook: missing signature header');
+      return res.status(401).json({ message: 'Missing signature' });
+    }
+
+    const rawBody = req.rawBody ? (req.rawBody as Buffer) : Buffer.from(JSON.stringify(req.body));
+    
+    if (!verifyYooKassaSignature(rawBody, signature, env.YUKASSA_SECRET_KEY)) {
+      logger.warn('YooKassa webhook: invalid signature', {
+        signature,
+        ip: req.ip,
+        hasRawBody: !!req.rawBody,
+      });
+      return res.status(401).json({ message: 'Invalid signature' });
+    }
+
     const event = req.body;
     
     if (event.type !== 'payment.succeeded') {
@@ -57,14 +104,17 @@ router.post('/yookassa', async (req, res) => {
             .select()
             .from(promocodeUsage)
             .where(
-              sql`promocode_id = ${order.promocodeId} AND user_id = ${order.userId}`
+              and(
+                eq(promocodeUsage.promocodeId, order.promocodeId!),
+                eq(promocodeUsage.userId, order.userId!)
+              )
             )
             .limit(1);
 
           if (!existingUsage.length) {
             await tx.insert(promocodeUsage).values({
-              promocodeId: order.promocodeId,
-              userId: order.userId,
+              promocodeId: order.promocodeId!,
+              userId: order.userId!,
               orderId: order.id,
             });
           }

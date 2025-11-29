@@ -10,7 +10,12 @@ export const corsMiddleware = cors({
           process.env.REPLIT_DEV_DOMAIN
         ].filter(Boolean);
         
-        if (!origin || allowedOrigins.includes(origin)) {
+        if (!origin) {
+          callback(new Error('Not allowed by CORS'));
+          return;
+        }
+        
+        if (allowedOrigins.includes(origin)) {
           callback(null, true);
         } else {
           callback(new Error('Not allowed by CORS'));
@@ -19,7 +24,7 @@ export const corsMiddleware = cors({
     : true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-csrf-token'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-csrf-token', 'idempotency-key'],
   maxAge: 86400,
   optionsSuccessStatus: 200,
 });
