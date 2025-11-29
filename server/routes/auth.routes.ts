@@ -161,8 +161,7 @@ router.get("/verify-email", async (req, res) => {
     return res.status(400).json({ message: "Токен не предоставлен" });
   }
 
-  const users = await storage.getUsers();
-  const user = users.find(u => u.verificationToken === token);
+  const user = await storage.getUserByVerificationToken(token);
 
   if (!user) {
     return res.status(400).json({ message: "Недействительный токен" });

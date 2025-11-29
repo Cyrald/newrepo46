@@ -51,6 +51,7 @@ import { eq, and, desc, sql, like, gte, lte, or, inArray } from "drizzle-orm";
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByVerificationToken(token: string): Promise<User | undefined>;
   getUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, data: Partial<User>): Promise<User | undefined>;
@@ -155,6 +156,11 @@ export class DatabaseStorage implements IStorage {
 
   async getUserByEmail(email: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    return user;
+  }
+
+  async getUserByVerificationToken(token: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.verificationToken, token)).limit(1);
     return user;
   }
 
@@ -703,7 +709,6 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllSupportConversations(status?: 'open' | 'archived' | 'closed'): Promise<{ userId: string; lastMessage: SupportMessage; status: string; archivedAt: Date | null; closedAt: Date | null }[]> {
-    // Get all conversations with optional status filter
     let conversationQuery = db.select().from(supportConversations);
     
     if (status) {
@@ -712,17 +717,27 @@ export class DatabaseStorage implements IStorage {
     
     const allConversations = await conversationQuery.orderBy(desc(supportConversations.lastMessageAt));
     
-    const result = [];
+    if (allConversations.length === 0) {
+      return [];
+    }
     
+    const userIds = allConversations.map(c => c.userId);
+    const messages = await db
+      .select()
+      .from(supportMessages)
+      .where(sql`${supportMessages.userId} IN (${sql.join(userIds.map(id => sql`${id}`), sql`, `)})`)
+      .orderBy(desc(supportMessages.createdAt));
+    
+    const lastMessageByUserId: Record<string, SupportMessage> = {};
+    for (const message of messages) {
+      if (!lastMessageByUserId[message.userId]) {
+        lastMessageByUserId[message.userId] = message;
+      }
+    }
+    
+    const result = [];
     for (const conv of allConversations) {
-      // Get last message for this conversation
-      const [lastMessage] = await db
-        .select()
-        .from(supportMessages)
-        .where(eq(supportMessages.userId, conv.userId))
-        .orderBy(desc(supportMessages.createdAt))
-        .limit(1);
-      
+      const lastMessage = lastMessageByUserId[conv.userId];
       if (lastMessage) {
         result.push({
           userId: conv.userId,
