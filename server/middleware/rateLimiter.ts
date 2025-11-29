@@ -64,3 +64,11 @@ export const orderLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+export const passwordChangeLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  message: 'Слишком много попыток смены пароля. Попробуйте через час.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});

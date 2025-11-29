@@ -35,6 +35,14 @@ export function createOrdersRoutes(connectedUsers: Map<string, ConnectedUser>) {
     if (!order) {
       return res.status(404).json({ message: "Заказ не найден" });
     }
+    
+    const roles = await storage.getUserRoles(req.userId!);
+    const isAdmin = roles.some(r => r.role === "admin");
+    
+    if (!isAdmin && order.userId !== req.userId) {
+      return res.status(403).json({ message: "Нет доступа к этому заказу" });
+    }
+    
     res.json(order);
   });
 

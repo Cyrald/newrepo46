@@ -32,7 +32,9 @@ export const users = pgTable("users", {
   bonusBalance: integer("bonus_balance").default(100).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  verificationTokenIdx: index("users_verification_token_idx").on(table.verificationToken),
+}));
 
 export const userRoles = pgTable("user_roles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -646,12 +648,12 @@ export const loginSchema = z.object({
 // Создание заказа
 export const createOrderSchema = z.object({
   items: z.array(z.object({
-    productId: z.string(),
-    name: z.string(),
-    price: z.string(),
-    quantity: z.number().min(1),
+    productId: z.string().uuid("Неверный ID товара"),
+    name: z.string().min(1).max(500),
+    price: z.string().regex(/^\d+(\.\d{1,2})?$/),
+    quantity: z.number().int().min(1).max(100, "Максимальное количество: 100"),
     discount: z.string().optional(),
-  })).min(1, "Корзина пуста"),
+  })).min(1, "Корзина пуста").max(50, "Слишком много товаров в заказе"),
   deliveryService: z.enum(['cdek', 'boxberry']),
   deliveryType: z.enum(['pvz', 'postamat', 'courier']),
   deliveryPointCode: z.string().optional(),
@@ -665,6 +667,181 @@ export const createOrderSchema = z.object({
   paymentMethod: z.enum(['online', 'on_delivery']),
   promocodeId: z.string().optional(),
   bonusesUsed: z.number().min(0).default(0),
+});
+
+// ============================================
+// CATEGORIES VALIDATION
+// ============================================
+
+export const createCategorySchema = z.object({
+  name: z.string()
+    .min(1, "Название категории обязательно")
+    .max(200, "Название слишком длинное")
+    .regex(/^[а-яА-ЯёЁa-zA-Z0-9\s\-]+$/, "Недопустимые символы в названии"),
+  
+  slug: z.string()
+    .min(1, "Slug обязателен")
+    .max(200, "Slug слишком длинный")
+    .regex(/^[a-z0-9\-]+$/, "Slug должен содержать только строчные буквы, цифры и дефисы"),
+  
+  description: z.string()
+    .max(1000, "Описание слишком длинное")
+    .optional()
+    .nullable()
+    .transform(val => val?.trim() || null),
+  
+  sortOrder: z.number()
+    .int("Порядок сортировки должен быть целым числом")
+    .min(0, "Порядок сортировки не может быть отрицательным")
+    .max(10000, "Слишком большой порядок сортировки")
+    .default(0),
+});
+
+export const updateCategorySchema = createCategorySchema.partial();
+
+// ============================================
+// PROMOCODES VALIDATION
+// ============================================
+
+export const validatePromocodeSchema = z.object({
+  code: z.string()
+    .min(1, "Промокод обязателен")
+    .max(50, "Промокод слишком длинный")
+    .regex(/^[A-Z0-9\-]+$/, "Промокод должен содержать только заглавные буквы, цифры и дефисы")
+    .transform(val => val.toUpperCase()),
+  
+  orderAmount: z.string()
+    .regex(/^\d+(\.\d{1,2})?$/, "Неверная сумма заказа")
+    .transform(val => parseFloat(val))
+    .refine(val => val > 0, "Сумма заказа должна быть положительной"),
+});
+
+export const createPromocodeSchema = z.object({
+  code: z.string()
+    .min(1, "Промокод обязателен")
+    .max(50, "Промокод слишком длинный")
+    .regex(/^[A-Z0-9\-]+$/, "Промокод должен содержать только заглавные буквы, цифры и дефисы")
+    .transform(val => val.toUpperCase()),
+  
+  discountPercentage: z.string()
+    .regex(/^\d+(\.\d{1,2})?$/, "Неверный процент скидки")
+    .refine(val => {
+      const num = parseFloat(val);
+      return num > 0 && num <= 100;
+    }, "Скидка должна быть от 0.01 до 100"),
+  
+  minOrderAmount: z.string()
+    .regex(/^\d+(\.\d{1,2})?$/, "Неверная минимальная сумма")
+    .default("0"),
+  
+  maxDiscountAmount: z.string()
+    .regex(/^\d+(\.\d{1,2})?$/, "Неверная максимальная сумма скидки")
+    .optional()
+    .nullable(),
+  
+  type: z.enum(['single_use', 'temporary'], {
+    errorMap: () => ({ message: "Неверный тип промокода" })
+  }),
+  
+  expiresAt: z.string()
+    .datetime({ message: "Неверный формат даты" })
+    .transform(val => new Date(val))
+    .optional()
+    .nullable(),
+  
+  isActive: z.boolean().default(true),
+});
+
+export const updatePromocodeSchema = createPromocodeSchema.partial();
+
+// ============================================
+// SUPPORT MESSAGES VALIDATION
+// ============================================
+
+export const createSupportMessageSchema = z.object({
+  messageText: z.string()
+    .min(1, "Сообщение не может быть пустым")
+    .max(10000, "Сообщение слишком длинное")
+    .transform(val => val.trim()),
+  
+  userId: z.string()
+    .uuid("Неверный ID пользователя")
+    .optional(),
+});
+
+// ============================================
+// CART VALIDATION
+// ============================================
+
+export const addCartItemSchema = z.object({
+  productId: z.string().uuid("Неверный ID товара"),
+  quantity: z.number()
+    .int("Количество должно быть целым числом")
+    .min(1, "Минимальное количество: 1")
+    .max(100, "Максимальное количество: 100"),
+});
+
+export const updateCartItemSchema = z.object({
+  quantity: z.number()
+    .int("Количество должно быть целым числом")
+    .min(1, "Минимальное количество: 1")
+    .max(100, "Максимальное количество: 100"),
+});
+
+// ============================================
+// WISHLIST VALIDATION
+// ============================================
+
+export const addWishlistItemSchema = z.object({
+  productId: z.string().uuid("Неверный ID товара"),
+});
+
+// ============================================
+// PROFILE & PASSWORD VALIDATION
+// ============================================
+
+export const updateProfileSchema = z.object({
+  firstName: z.string()
+    .min(1, "Имя обязательно")
+    .max(100, "Имя слишком длинное")
+    .regex(/^[а-яА-ЯёЁa-zA-Z\s\-]+$/, "Недопустимые символы в имени"),
+  
+  lastName: z.string()
+    .max(100, "Фамилия слишком длинная")
+    .regex(/^[а-яА-ЯёЁa-zA-Z\s\-]+$/, "Недопустимые символы в фамилии")
+    .optional()
+    .nullable()
+    .transform(val => val?.trim() || null),
+  
+  patronymic: z.string()
+    .max(100, "Отчество слишком длинное")
+    .regex(/^[а-яА-ЯёЁa-zA-Z\s\-]+$/, "Недопустимые символы в отчестве")
+    .optional()
+    .nullable()
+    .transform(val => val?.trim() || null),
+  
+  phone: z.string()
+    .regex(/^\+?\d{10,15}$/, "Неверный формат телефона"),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Текущий пароль обязателен"),
+  
+  newPassword: z.string()
+    .min(12, "Пароль должен быть не менее 12 символов")
+    .max(100, "Пароль слишком длинный")
+    .regex(/[a-z]/, "Пароль должен содержать строчную букву")
+    .regex(/[A-Z]/, "Пароль должен содержать заглавную букву")
+    .regex(/\d/, "Пароль должен содержать цифру")
+    .regex(/[@$!%*?&#]/, "Пароль должен содержать спецсимвол (@$!%*?&#)"),
+  
+  confirmPassword: z.string(),
+}).refine(data => data.newPassword === data.confirmPassword, {
+  message: "Пароли не совпадают",
+  path: ["confirmPassword"],
+}).refine(data => data.currentPassword !== data.newPassword, {
+  message: "Новый пароль должен отличаться от текущего",
+  path: ["newPassword"],
 });
 
 export type RegisterInput = z.infer<typeof registerSchema>;

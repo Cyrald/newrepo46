@@ -2,9 +2,9 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { hashPassword, comparePassword, authenticateToken } from "../auth";
 import { generateVerificationToken, sendVerificationEmail } from "../email";
-import { registerSchema, loginSchema } from "@shared/schema";
+import { registerSchema, loginSchema, updateProfileSchema, changePasswordSchema } from "@shared/schema";
 import { z } from "zod";
-import { authLimiter, registerLimiter } from "../middleware/rateLimiter";
+import { authLimiter, registerLimiter, passwordChangeLimiter } from "../middleware/rateLimiter";
 import { logLoginAttempt, logRegistration } from "../utils/securityLogger";
 
 const router = Router();
@@ -207,56 +207,70 @@ router.get("/me", authenticateToken, async (req, res) => {
 });
 
 router.put("/profile", authenticateToken, async (req, res) => {
-  const { firstName, lastName, patronymic, phone } = req.body;
+  try {
+    const data = updateProfileSchema.parse(req.body);
 
-  await storage.updateUser(req.userId!, {
-    firstName: firstName?.trim(),
-    lastName: lastName?.trim() || null,
-    patronymic: patronymic?.trim() || null,
-    phone: phone?.trim(),
-  });
+    await storage.updateUser(req.userId!, {
+      firstName: data.firstName.trim(),
+      lastName: data.lastName,
+      patronymic: data.patronymic,
+      phone: data.phone.trim(),
+    });
 
-  const updatedUser = await storage.getUser(req.userId!);
-  const roles = await storage.getUserRoles(req.userId!);
-  const roleNames = roles.map(r => r.role);
+    const updatedUser = await storage.getUser(req.userId!);
+    const roles = await storage.getUserRoles(req.userId!);
+    const roleNames = roles.map(r => r.role);
 
-  res.json({
-    user: {
-      id: updatedUser!.id,
-      email: updatedUser!.email,
-      firstName: updatedUser!.firstName,
-      lastName: updatedUser!.lastName,
-      patronymic: updatedUser!.patronymic,
-      phone: updatedUser!.phone,
-      isVerified: updatedUser!.isVerified,
-      bonusBalance: updatedUser!.bonusBalance,
-      roles: roleNames,
-    },
-  });
+    res.json({
+      user: {
+        id: updatedUser!.id,
+        email: updatedUser!.email,
+        firstName: updatedUser!.firstName,
+        lastName: updatedUser!.lastName,
+        patronymic: updatedUser!.patronymic,
+        phone: updatedUser!.phone,
+        isVerified: updatedUser!.isVerified,
+        bonusBalance: updatedUser!.bonusBalance,
+        roles: roleNames,
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.errors[0].message });
+    }
+    throw error;
+  }
 });
 
-router.put("/password", authenticateToken, async (req, res) => {
-  const { currentPassword, newPassword } = req.body;
+router.put("/password", authenticateToken, passwordChangeLimiter, async (req, res) => {
+  try {
+    const data = changePasswordSchema.parse(req.body);
 
-  const user = await storage.getUser(req.userId!);
-  
-  if (!user) {
-    return res.status(404).json({ message: "Пользователь не найден" });
+    const user = await storage.getUser(req.userId!);
+    
+    if (!user) {
+      return res.status(404).json({ message: "Пользователь не найден" });
+    }
+
+    const isPasswordValid = await comparePassword(data.currentPassword, user.passwordHash);
+
+    if (!isPasswordValid) {
+      return res.status(401).json({ message: "Неверный текущий пароль" });
+    }
+
+    const newPasswordHash = await hashPassword(data.newPassword);
+
+    await storage.updateUser(req.userId!, {
+      passwordHash: newPasswordHash,
+    });
+
+    res.json({ message: "Пароль успешно изменён" });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.errors[0].message });
+    }
+    throw error;
   }
-
-  const isPasswordValid = await comparePassword(currentPassword, user.passwordHash);
-
-  if (!isPasswordValid) {
-    return res.status(401).json({ message: "Неверный текущий пароль" });
-  }
-
-  const newPasswordHash = await hashPassword(newPassword);
-
-  await storage.updateUser(req.userId!, {
-    passwordHash: newPasswordHash,
-  });
-
-  res.json({ message: "Пароль успешно изменён" });
 });
 
 export default router;

@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { authenticateToken, requireRole } from "../auth";
+import { createCategorySchema, updateCategorySchema } from "@shared/schema";
+import { z } from "zod";
 
 const router = Router();
 
@@ -20,25 +22,43 @@ router.get("/:id", async (req, res) => {
 });
 
 router.post("/", authenticateToken, requireRole("admin", "marketer"), async (req, res) => {
-  const category = await storage.createCategory({
-    name: req.body.name,
-    slug: req.body.slug,
-    description: req.body.description || null,
-    sortOrder: req.body.sortOrder || 0,
-  });
+  try {
+    const data = createCategorySchema.parse(req.body);
+    
+    const category = await storage.createCategory({
+      name: data.name,
+      slug: data.slug,
+      description: data.description,
+      sortOrder: data.sortOrder,
+    });
 
-  res.json(category);
+    res.json(category);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.errors[0].message });
+    }
+    throw error;
+  }
 });
 
 router.put("/:id", authenticateToken, requireRole("admin", "marketer"), async (req, res) => {
-  const category = await storage.updateCategory(req.params.id, {
-    name: req.body.name,
-    slug: req.body.slug,
-    description: req.body.description || null,
-    sortOrder: req.body.sortOrder,
-  });
+  try {
+    const data = updateCategorySchema.parse(req.body);
+    
+    const category = await storage.updateCategory(req.params.id, {
+      name: data.name,
+      slug: data.slug,
+      description: data.description,
+      sortOrder: data.sortOrder,
+    });
 
-  res.json(category);
+    res.json(category);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: error.errors[0].message });
+    }
+    throw error;
+  }
 });
 
 router.delete("/:id", authenticateToken, requireRole("admin", "marketer"), async (req, res) => {

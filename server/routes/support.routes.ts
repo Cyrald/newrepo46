@@ -4,6 +4,9 @@ import { authenticateToken, requireRole } from "../auth";
 import { chatAttachmentsUpload } from "../upload";
 import { chatImagePipeline } from "../ImagePipeline";
 import { uploadLimiter } from "../middleware/rateLimiter";
+import { createSupportMessageSchema } from "@shared/schema";
+import { sanitizeHtml } from "../utils/sanitize";
+import { z } from "zod";
 import type { WebSocket } from "ws";
 
 interface ConnectedUser {
@@ -61,44 +64,55 @@ export function createSupportRoutes(connectedUsers: Map<string, ConnectedUser>) 
   });
 
   router.post("/messages", authenticateToken, async (req, res) => {
-    let userId = req.userId!;
-    
-    if (req.body.userId && req.body.userId !== req.userId) {
-      if (!req.userRoles?.some(role => ['admin', 'consultant'].includes(role))) {
-        return res.status(403).json({ message: "Нет прав для отправки сообщений от имени других пользователей" });
-      }
-      userId = req.body.userId;
-    }
-    
-    await storage.getOrCreateConversation(userId);
-    await storage.updateLastMessageTime(userId);
-    
-    const message = await storage.createSupportMessage({
-      userId: userId,
-      senderId: req.userId!,
-      messageText: req.body.messageText,
-    });
-    
-    const notification = {
-      type: "new_message",
-      message: message,
-    };
-    
-    const customerConnection = connectedUsers.get(userId);
-    if (customerConnection?.ws && customerConnection.ws.readyState === 1) {
-      customerConnection.ws.send(JSON.stringify(notification));
-    }
-    
-    for (const [connUserId, connection] of Array.from(connectedUsers.entries())) {
-      if (connUserId === userId) continue;
+    try {
+      const data = createSupportMessageSchema.parse(req.body);
       
-      const isStaff = connection.roles.some((role: string) => ['admin', 'consultant'].includes(role));
-      if (isStaff && connection.ws.readyState === 1) {
-        connection.ws.send(JSON.stringify(notification));
+      let userId = req.userId!;
+      
+      if (data.userId && data.userId !== req.userId) {
+        if (!req.userRoles?.some(role => ['admin', 'consultant'].includes(role))) {
+          return res.status(403).json({ message: "Нет прав для отправки сообщений от имени других пользователей" });
+        }
+        userId = data.userId;
       }
+      
+      await storage.getOrCreateConversation(userId);
+      await storage.updateLastMessageTime(userId);
+      
+      const sanitizedMessageText = sanitizeHtml(data.messageText);
+      
+      const message = await storage.createSupportMessage({
+        userId: userId,
+        senderId: req.userId!,
+        messageText: sanitizedMessageText,
+      });
+      
+      const notification = {
+        type: "new_message",
+        message: message,
+      };
+      
+      const customerConnection = connectedUsers.get(userId);
+      if (customerConnection?.ws && customerConnection.ws.readyState === 1) {
+        customerConnection.ws.send(JSON.stringify(notification));
+      }
+      
+      for (const [connUserId, connection] of Array.from(connectedUsers.entries())) {
+        if (connUserId === userId) continue;
+        
+        const isStaff = connection.roles.some((role: string) => ['admin', 'consultant'].includes(role));
+        if (isStaff && connection.ws.readyState === 1) {
+          connection.ws.send(JSON.stringify(notification));
+        }
+      }
+      
+      res.json(message);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: error.errors[0].message });
+      }
+      throw error;
     }
-    
-    res.json(message);
   });
 
   router.put("/conversations/:userId/archive", authenticateToken, requireRole("admin", "consultant"), async (req, res) => {
