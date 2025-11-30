@@ -109,12 +109,17 @@ app.use(express.urlencoded({
   
   app.use('/api', generalApiLimiter);
   
-  app.get('/api/csrf-token', csrfTokenEndpoint);
+  // Initial CSRF token endpoint (no CSRF protection, used after login/register)
+  app.get('/api/csrf-token-init', csrfTokenEndpoint);
   
   const webhooksRoutes = await import('./routes/webhooks.routes');
   app.use('/api/webhooks', webhooksRoutes.default);
   
+  // Apply CSRF protection to all /api routes (except webhooks and csrf-token-init)
   app.use('/api', csrfMiddleware);
+  
+  // Protected CSRF token refresh endpoint (with CSRF protection)
+  app.get('/api/csrf-token', csrfTokenEndpoint);
   
   const server = await registerRoutes(app);
 
