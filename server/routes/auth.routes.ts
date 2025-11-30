@@ -9,7 +9,6 @@ import { logLoginAttempt, logRegistration } from "../utils/securityLogger";
 import { logger } from "../utils/logger";
 import { invalidateAllUserSessions } from "../utils/sessionManager";
 import { validatePassword } from "../utils/sanitize";
-import { generateCsrfToken } from "../middleware/csrf";
 
 const router = Router();
 
@@ -66,8 +65,6 @@ router.post("/register", registerLimiter, async (req, res) => {
         logger.error('Session save error during registration', { error: saveErr.message });
         return res.status(500).json({ message: "Ошибка регистрации" });
       }
-      
-      generateCsrfToken(req, res);
       
       logRegistration({
         email: user.email,
@@ -132,8 +129,6 @@ router.post("/login", authLimiter, async (req, res) => {
         logger.error('Session save error during login', { error: saveErr.message });
         return res.status(500).json({ message: "Ошибка входа" });
       }
-      
-      generateCsrfToken(req, res);
       
       logLoginAttempt({
         email: user.email,
