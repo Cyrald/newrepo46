@@ -36,10 +36,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     } finally {
       useCartStore.getState().clear();
       
-      // Очистить cookies при logout
-      document.cookie = 'sessionId=; Max-Age=0; path=/';
-      document.cookie = 'csrf-token=; Max-Age=0; path=/';
-      
       set({
         user: null,
         isAuthenticated: false,
@@ -53,34 +49,16 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   checkAuth: async () => {
-    // Проверить наличие session cookie ЛОКАЛЬНО перед API запросом
-    const hasSessionCookie = document.cookie
-      .split('; ')
-      .some(cookie => cookie.startsWith('sessionId='));
-    
-    if (!hasSessionCookie) {
-      // Нет cookie → точно не залогинен, не делаем лишний API запрос
-      set({
-        user: null,
-        isAuthenticated: false,
-        authInitialized: true,
-      });
-      return;
-    }
-    
-    // Cookie есть → проверить валидность сессии через API
+    // httpOnly cookies недоступны для document.cookie, поэтому просто вызываем API
     try {
-      const user = await authApi.me();
+      const { user } = await authApi.me();
       set({
         user,
         isAuthenticated: true,
         authInitialized: true,
       });
     } catch (error) {
-      // Сессия невалидна → очистить cookies
-      document.cookie = 'sessionId=; Max-Age=0; path=/';
-      document.cookie = 'csrf-token=; Max-Age=0; path=/';
-      
+      // Токен невалиден или отсутствует → сбросить состояние
       set({
         user: null,
         isAuthenticated: false,

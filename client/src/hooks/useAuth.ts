@@ -58,7 +58,7 @@ export function useMe() {
 
   useEffect(() => {
     if (query.data) {
-      setUser(query.data as User);
+      setUser(query.data.user);
     }
   }, [query.data, setUser]);
 
@@ -76,8 +76,8 @@ export function useUpdateProfile() {
       patronymic?: string;
       phone?: string;
     }) => authApi.updateProfile(data),
-    onSuccess: (user) => {
-      setUser(user);
+    onSuccess: (response) => {
+      setUser(response.user);
       queryClient.invalidateQueries({ queryKey: ["user", "me"] });
     },
   });

@@ -215,7 +215,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async validateRefreshToken(jti: string): Promise<boolean> {
-    const [token] = await db.query.refreshTokens.findFirst({
+    const token = await db.query.refreshTokens.findFirst({
       where: eq(refreshTokens.jti, jti),
     });
     
