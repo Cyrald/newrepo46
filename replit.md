@@ -43,16 +43,16 @@ Preferred communication style: Simple, everyday language.
 - WebSocket (ws) for real-time communication
 
 **Authentication & Security:**
-- Pure JWT authentication (httpOnly cookies: accessToken 15min, refreshToken 7 days)
-- Token versioning for ban/logout scenarios (invalidates all client sessions)
-- bcrypt for password hashing with timing-attack protection
-- Double-submit cookie pattern (httpOnly + SameSite: strict replaces CSRF tokens)
+- Stub authentication (all requests execute as admin@ecomarket.ru user)
+- Authentication middleware bypassed for development/testing purposes
+- Auth endpoints remain but return stub responses
 - Role-based access control (admin, marketer, consultant, customer)
-- Rate limiting: auth 15/15min, register 5/hour, uploads 30/hour, refresh 100/15min
+- Rate limiting: auth 15/15min, register 5/hour, uploads 30/hour
 - Helmet for security headers
 - Input sanitization and validation via Zod schemas
 - Path traversal protection for file operations
 - Idempotency keys for critical operations (order creation)
+- **WARNING:** This configuration is NOT production-ready - all endpoints are publicly accessible with admin privileges
 
 **Image Processing Pipeline:**
 - Sharp for image optimization and resizing
@@ -78,13 +78,11 @@ Preferred communication style: Simple, everyday language.
 
 **WebSocket Architecture:**
 - Persistent connections for support chat
-- JWT accessToken authentication for WebSocket handshake (from httpOnly cookies)
-- Token versioning validation (rejects connections after logout/ban)
+- Stub authentication for WebSocket connections
 - Connection rate limiting (10 connections per minute)
 - Message rate limiting (60 messages per minute)
 - Automatic reconnection handling on client side
 - Real-time order status updates pushed to admin users
-- WebSocket cleanup on logout and admin ban operations
 
 **Database Schema Design:**
 - User management with email verification and token versioning
@@ -94,7 +92,6 @@ Preferred communication style: Simple, everyday language.
 - Order system with itemized details stored as JSONB
 - Promocode usage tracking
 - Support conversation threading
-- Refresh tokens table (JTI-based, indexed by expiry for cleanup)
 - Idempotency keys table for duplicate request prevention
 
 ## External Dependencies
@@ -124,13 +121,6 @@ Preferred communication style: Simple, everyday language.
 - Winston for structured logging
 - TypeScript for type safety across frontend and backend
 
-**Token Storage:**
-- Refresh tokens stored in PostgreSQL with JTI (JWT ID) for revocation
-- AccessToken: 15-minute lifetime, stored in httpOnly secure cookie
-- RefreshToken: 7-day lifetime, stored in httpOnly secure cookie at /api/auth path
-- Secure cookies in production (httpOnly, sameSite: strict)
-- Token versioning in users table for instant invalidation (ban, logout, password change)
-
 **File Storage:**
 - Local filesystem for product and chat images
 - Uploads directory with .temp subdirectory for processing
@@ -141,7 +131,6 @@ Preferred communication style: Simple, everyday language.
 - Auth endpoints: 15 attempts/15min (login)
 - Registration: 5 attempts/hour
 - Uploads: 30/hour
-- Token refresh: 100/15min
 - Search endpoint: 60/minute
 - CORS configured for production with whitelist validation
 - Security headers via Helmet
