@@ -1,39 +1,11 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { getAccessToken, refreshAccessToken } from "./tokenManager";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
   }
-}
-
-let isRefreshing = false;
-let refreshPromise: Promise<void> | null = null;
-
-async function refreshAccessToken(): Promise<void> {
-  if (isRefreshing && refreshPromise) {
-    return refreshPromise;
-  }
-
-  isRefreshing = true;
-  refreshPromise = fetch('/api/auth/refresh', {
-    method: 'POST',
-    credentials: 'include',
-  }).then(async (response) => {
-    if (!response.ok) {
-      isRefreshing = false;
-      refreshPromise = null;
-      throw new Error('Failed to refresh token');
-    }
-    isRefreshing = false;
-    refreshPromise = null;
-  }).catch((error) => {
-    isRefreshing = false;
-    refreshPromise = null;
-    throw error;
-  });
-
-  return refreshPromise;
 }
 
 export async function apiRequest<T = unknown>(
@@ -48,6 +20,11 @@ export async function apiRequest<T = unknown>(
 
   const headers: Record<string, string> = {};
   
+  const accessToken = getAccessToken();
+  if (accessToken && !url.includes('/auth/refresh')) {
+    headers["Authorization"] = `Bearer ${accessToken}`;
+  }
+  
   if (data && !isFileUpload) {
     headers["Content-Type"] = "application/json";
   }
@@ -61,9 +38,14 @@ export async function apiRequest<T = unknown>(
 
   if (res.status === 401 && !url.includes('/auth/login') && !url.includes('/auth/register') && !url.includes('/auth/refresh')) {
     try {
-      await refreshAccessToken();
+      const newToken = await refreshAccessToken();
+      
+      if (!newToken) {
+        throw new Error('Сессия истекла. Пожалуйста, войдите снова.');
+      }
       
       const retryHeaders: Record<string, string> = {};
+      retryHeaders["Authorization"] = `Bearer ${newToken}`;
       
       if (data && !isFileUpload) {
         retryHeaders["Content-Type"] = "application/json";
@@ -113,8 +95,15 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
+    const headers: Record<string, string> = {};
+    const accessToken = getAccessToken();
+    if (accessToken) {
+      headers["Authorization"] = `Bearer ${accessToken}`;
+    }
+    
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
+      headers,
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {

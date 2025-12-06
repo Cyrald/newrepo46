@@ -9,6 +9,7 @@ import { logger } from "../utils/logger";
 import type { Request } from "express";
 
 const MAX_ROTATION_COUNT = 10;
+const GRACE_PERIOD_MS = 5000;
 
 interface LoginResult {
   user: {
@@ -181,6 +182,67 @@ export async function refreshAccessToken(refreshTokenString: string): Promise<{ 
 
   if (storedToken.revokedAt) {
     const timeSinceRevoked = Date.now() - new Date(storedToken.revokedAt).getTime();
+    
+    if (timeSinceRevoked < GRACE_PERIOD_MS) {
+      logger.info('🔄 GRACE_PERIOD_APPLIED - Race condition detected, fetching latest token', { 
+        jti: payload.jti, 
+        userId: payload.userId,
+        tfid: payload.tfid,
+        timeSinceRevokedMs: timeSinceRevoked
+      });
+      
+      const [latestToken] = await db.select().from(refreshTokens)
+        .where(and(
+          eq(refreshTokens.tfid, payload.tfid),
+          eq(refreshTokens.userId, payload.userId)
+        ))
+        .orderBy(desc(refreshTokens.createdAt))
+        .limit(1);
+      
+      if (latestToken && !latestToken.revokedAt) {
+        const roles = await db.select().from(userRoles).where(eq(userRoles.userId, payload.userId));
+        const roleNames = roles.map(r => r.role);
+        
+        const [user] = await db.select().from(users).where(eq(users.id, payload.userId)).limit(1);
+        if (!user || user.banned || user.deletedAt) {
+          throw new Error('USER_NOT_FOUND');
+        }
+        
+        await db.update(refreshTokens)
+          .set({ revokedAt: new Date() })
+          .where(eq(refreshTokens.jti, latestToken.jti));
+        
+        const oldTokenExpiresAt = new Date(latestToken.expiresAt);
+        tokenBlacklist.addJti(latestToken.jti, payload.userId, payload.tfid, oldTokenExpiresAt, 'rotation');
+        
+        const newAccessToken = generateAccessToken(user.id, roleNames, payload.tfid, user.tokenVersion);
+        const { token: newRefreshToken, jti: newJti } = generateRefreshToken(user.id, payload.tfid);
+        
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 14);
+        
+        await db.insert(refreshTokens).values({
+          jti: newJti,
+          sessionId: latestToken.sessionId,
+          userId: user.id,
+          tfid: payload.tfid,
+          rotationCount: latestToken.rotationCount + 1,
+          expiresAt,
+        });
+        
+        await db.update(sessions)
+          .set({ lastActivityAt: new Date() })
+          .where(eq(sessions.id, latestToken.sessionId));
+        
+        logger.info('Tokens refreshed via grace period', { userId: user.id, tfid: payload.tfid });
+        
+        return {
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
+        };
+      }
+    }
+    
     logger.error('🔴🔴🔴 TOKEN_REUSE_DETECTED 🔴🔴🔴', { 
       jti: payload.jti, 
       userId: payload.userId,
@@ -190,7 +252,7 @@ export async function refreshAccessToken(refreshTokenString: string): Promise<{ 
       timeSinceRevokedMs: timeSinceRevoked,
       timeSinceRevokedSec: (timeSinceRevoked / 1000).toFixed(2),
       rotationCount: storedToken.rotationCount,
-      DIAGNOSIS: timeSinceRevoked < 5000 ? 'LIKELY_RACE_CONDITION_OR_DOUBLE_USEEFFECT' : 'POSSIBLE_REPLAY_ATTACK'
+      DIAGNOSIS: 'POSSIBLE_REPLAY_ATTACK'
     });
     
     await db.update(refreshTokens)

@@ -15,6 +15,13 @@ import type {
   Promocode,
   SupportMessage,
 } from "@shared/schema";
+import { 
+  getAccessToken, 
+  setAccessToken, 
+  clearAccessToken, 
+  refreshAccessToken as tokenManagerRefresh,
+  initializeAuth as tokenManagerInitAuth
+} from "./tokenManager";
 
 export class ApiError extends Error {
   constructor(
@@ -26,10 +33,6 @@ export class ApiError extends Error {
     this.name = "ApiError";
   }
 }
-
-let accessToken: string | null = null;
-let isRefreshing = false;
-let refreshPromise: Promise<string> | null = null;
 
 const PROTECTED_ENDPOINTS = [
   '/api/cart',
@@ -50,63 +53,10 @@ function isProtectedEndpoint(endpoint: string): boolean {
   return PROTECTED_ENDPOINTS.some(protectedPath => endpoint.startsWith(protectedPath));
 }
 
-export function setAccessToken(token: string | null) {
-  accessToken = token;
-}
-
-export function getAccessToken(): string | null {
-  return accessToken;
-}
-
-async function refreshAccessToken(): Promise<string> {
-  if (isRefreshing && refreshPromise) {
-    return refreshPromise;
-  }
-
-  isRefreshing = true;
-  refreshPromise = (async () => {
-    try {
-      const response = await fetch("/api/auth/refresh", {
-        method: "POST",
-        credentials: "include",
-      });
-
-      if (!response.ok) {
-        accessToken = null;
-        throw new Error("REFRESH_FAILED");
-      }
-
-      const data = await response.json();
-      accessToken = data.accessToken;
-      return data.accessToken;
-    } finally {
-      isRefreshing = false;
-      refreshPromise = null;
-    }
-  })();
-
-  return refreshPromise;
-}
+export { setAccessToken, getAccessToken, clearAccessToken };
 
 export async function initializeAuth(): Promise<boolean> {
-  try {
-    const response = await fetch("/api/auth/refresh", {
-      method: "POST",
-      credentials: "include",
-    });
-
-    if (!response.ok) {
-      accessToken = null;
-      return false;
-    }
-
-    const data = await response.json();
-    accessToken = data.accessToken;
-    return true;
-  } catch (error) {
-    accessToken = null;
-    return false;
-  }
+  return tokenManagerInitAuth();
 }
 
 async function fetchApi<T>(
@@ -124,6 +74,7 @@ async function fetchApi<T>(
     headers["Content-Type"] = "application/json";
   }
 
+  const accessToken = getAccessToken();
   if (accessToken && !endpoint.includes("/auth/refresh")) {
     headers["Authorization"] = `Bearer ${accessToken}`;
   }
@@ -158,10 +109,40 @@ async function fetchApi<T>(
     }
     
     try {
-      await refreshAccessToken();
-      return fetchApi<T>(endpoint, options, retryCount + 1);
+      const newToken = await tokenManagerRefresh();
+      if (newToken) {
+        const retryHeaders: Record<string, string> = {
+          ...(options.headers as Record<string, string>),
+        };
+        
+        if (!isFormData) {
+          retryHeaders["Content-Type"] = "application/json";
+        }
+        
+        retryHeaders["Authorization"] = `Bearer ${newToken}`;
+        
+        const retryResponse = await fetch(endpoint, {
+          ...options,
+          headers: retryHeaders,
+          credentials: 'include',
+        });
+        
+        if (!retryResponse.ok) {
+          const errorData = await retryResponse.json().catch(() => ({
+            message: "Произошла ошибка",
+          }));
+          throw new ApiError(
+            retryResponse.status, 
+            errorData.message || "Произошла ошибка",
+            errorData.code
+          );
+        }
+        
+        return retryResponse.json();
+      }
+      throw new Error('REFRESH_FAILED');
     } catch (refreshError) {
-      accessToken = null;
+      clearAccessToken();
       if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
         window.location.href = "/login";
         return new Promise(() => {}) as Promise<T>;
@@ -207,7 +188,7 @@ export const authApi = {
     const result = await fetchApi<{ message: string }>("/api/auth/logout", {
       method: "POST",
     });
-    setAccessToken(null);
+    clearAccessToken();
     return result;
   },
 
@@ -232,7 +213,7 @@ export const authApi = {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    setAccessToken(null);
+    clearAccessToken();
     return result;
   },
   
